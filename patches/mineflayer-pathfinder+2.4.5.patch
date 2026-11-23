@@ -39,7 +39,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
          curPoint.z = Math.floor(curPoint.z) + 0.5
-@@ -524,6 +535,7 @@
+@@ -524,6 +535,8 @@
          bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z))).then(() => {
            lockUseBlock.release()
            placingBlock = nextPoint.toPlace.shift()
@@ -47,6 +47,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
          }, err => {
            console.error(err)
            lockUseBlock.release()
++          resetPath('use_one_error')
 @@ -557,6 +569,7 @@
                .then(function () {
                  // Dont release Sneak if the block placement was not successful
