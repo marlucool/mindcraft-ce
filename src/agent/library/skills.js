@@ -1461,7 +1461,7 @@ export async function moveAway(bot, distance) {
 
     if (bot.modes.isOn('cheat')) {
         try {
-            const result = await bot.pathfinder.getPathTo(movements, invertedGoal, 10000);
+            const result = await searchPath(bot, movements, invertedGoal, 10000);
             const lastMove = result?.status === 'success' ? result.path?.at(-1) : null;
             if (!lastMove) {
                 log(bot, 'Could not find a complete recovery destination.');
@@ -1542,7 +1542,7 @@ export async function avoidEnemies(bot, distance=16) {
      **/
     bot.modes.pause('self_preservation'); // prevents damage-on-low-health from interrupting the bot
     let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), distance);
-    while (enemy) {
+    while (enemy && !bot.interrupt_code) {
         const follow = new pf.goals.GoalFollow(enemy, distance+1); // move a little further away
         const inverted_goal = new pf.goals.GoalInvert(follow);
         bot.pathfinder.setMovements(new pf.Movements(bot));
@@ -1558,6 +1558,10 @@ export async function avoidEnemies(bot, distance=16) {
         }
     }
     bot.pathfinder.stop();
+    if (bot.interrupt_code) {
+        log(bot, 'Enemy avoidance was interrupted before threats were clear.');
+        return false;
+    }
     log(bot, `Moved ${distance} away from enemies.`);
     return true;
 }
@@ -1571,6 +1575,10 @@ export async function stay(bot, seconds=30) {
      * @example
      * await skills.stay(bot);
      **/
+    if (!Number.isFinite(seconds) || (seconds < 0 && seconds !== -1)) {
+        log(bot, 'Stay duration must be a non-negative number or -1.');
+        return false;
+    }
     bot.modes.pause('self_preservation');
     bot.modes.pause('unstuck');
     bot.modes.pause('cowardice');
@@ -1582,8 +1590,13 @@ export async function stay(bot, seconds=30) {
     while (!bot.interrupt_code && (seconds === -1 || Date.now() - start < seconds*1000)) {
         await new Promise(resolve => setTimeout(resolve, 500));
     }
-    log(bot, `Stayed for ${(Date.now() - start)/1000} seconds.`);
-    return true;
+    const stayed = !bot.interrupt_code;
+    if (stayed) {
+        log(bot, `Stayed for ${(Date.now() - start)/1000} seconds.`);
+    } else {
+        log(bot, `Stay was interrupted after ${(Date.now() - start)/1000} seconds.`);
+    }
+    return stayed;
 }
 
 export async function useDoor(bot, door_pos=null) {
