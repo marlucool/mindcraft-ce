@@ -381,6 +381,7 @@ export async function attackEntity(bot, entity, kill=true) {
         }
         console.log('attacking mob...')
         await bot.attack(entity);
+        return true;
     }
     else {
         bot.pvp.attack(entity);
@@ -1091,26 +1092,30 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
     }
 
     await bot.lookAt(player.position);
-    if (await discard(bot, itemType, num)) {
-        let given = false;
-        bot.once('playerCollect', (collector, collected) => {
-            console.log(collected.name);
-            if (collector.username === username) {
-                log(bot, `${username} received ${itemType}.`);
-                given = true;
-            }
-        });
-        let start = Date.now();
-        while (!given && !bot.interrupt_code) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            if (given) {
-                return true;
-            }
-            if (Date.now() - start > 3000) {
-                break;
-            }
+    let given = false;
+    const onPlayerCollect = (collector, collected) => {
+        if (collector?.username === username && collected?.name === itemType) {
+            log(bot, `${username} received ${itemType}.`);
+            given = true;
         }
+    };
+
+    // Register before tossing: the recipient can collect the dropped item immediately.
+    bot.on('playerCollect', onPlayerCollect);
+    try {
+        if (await discard(bot, itemType, num)) {
+            if (given) return true;
+
+            const start = Date.now();
+            while (!given && !bot.interrupt_code && Date.now() - start <= 3000) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            if (given) return true;
+        }
+    } finally {
+        bot.removeListener('playerCollect', onPlayerCollect);
     }
+
     log(bot, `Failed to give ${itemType} to ${username}, it was never received.`);
     return false;
 }

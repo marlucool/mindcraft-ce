@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: CC0-1.0
 import test, { before } from 'node:test';
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import minecraftData from 'minecraft-data';
 import { Vec3 } from 'vec3';
 import settings from '../settings.js';
 import { setSettings } from '../src/agent/settings.js';
 import { initBot } from '../src/utils/mcdata.js';
-import { moveAway, moveAwayFromEntity, avoidEnemies, stay, goToNearestBlock, goToNearestEntity, goToPlayer, pickupNearbyItems, putInChest, goToSurface } from '../src/agent/library/skills.js';
+import { moveAway, moveAwayFromEntity, avoidEnemies, stay, goToNearestBlock, goToNearestEntity, goToPlayer, pickupNearbyItems, putInChest, goToSurface, giveToPlayer, attackEntity } from '../src/agent/library/skills.js';
 
 const VERSION = '1.21.11';
 const registry = minecraftData(VERSION);
@@ -20,7 +21,7 @@ before(() => {
 });
 
 function fakeBot({ destination = null, entityPosition = new Vec3(0, 64, 0), cheat = false } = {}) {
-    const bot = {
+    const bot = Object.assign(new EventEmitter(), {
         registry,
         version: VERSION,
         game: { minY: -64 },
@@ -45,7 +46,7 @@ function fakeBot({ destination = null, entityPosition = new Vec3(0, 64, 0), chea
             },
         },
         blockAt() { return null; },
-    };
+    });
     return bot;
 }
 
@@ -204,4 +205,36 @@ test('goToSurface reports false when the surface cannot be reached', async () =>
     bot.pathfinder.goto = async () => { throw new Error('NoPath'); };
 
     assert.equal(await goToSurface(bot), false);
+});
+
+
+test('giveToPlayer catches an immediate collection event fired while tossing', async () => {
+    const bot = fakeBot();
+    bot.username = 'MovementTest';
+    bot.players = { Alex: { entity: { username: 'Alex', position: new Vec3(2.5, 64, 0) } } };
+    bot.modes.pause = () => {};
+    bot.lookAt = async () => {};
+    let heldItem = {
+        name: 'oak_log',
+        type: registry.itemsByName.oak_log.id,
+        count: 1,
+    };
+    bot.inventory.findInventoryItem = name => heldItem?.name === name ? heldItem : null;
+    bot.toss = async () => {
+        bot.emit('playerCollect', bot.players.Alex.entity, { name: 'oak_log' });
+        heldItem = null;
+    };
+
+    assert.equal(await giveToPlayer(bot, 'oak_log', 'Alex', 1), true);
+    assert.equal(bot.listenerCount('playerCollect'), 0, 'the temporary event listener must be removed');
+});
+
+test('attackEntity returns true after a successful non-lethal attack', async () => {
+    const bot = fakeBot();
+    const target = { name: 'zombie', position: new Vec3(2, 64, 0) };
+    let attacked = false;
+    bot.attack = async entity => { attacked = entity === target; };
+
+    assert.equal(await attackEntity(bot, target, false), true);
+    assert.equal(attacked, true);
 });
