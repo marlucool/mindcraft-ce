@@ -19,7 +19,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
      stopPathing = true
    }
 
-@@ -168,9 +172,16 @@
+@@ -168,9 +172,17 @@
    function postProcessPath (path) {
      for (let i = 0; i < path.length; i++) {
        const curPoint = path[i]
@@ -34,7 +34,8 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
 +      // would put it on top of the swung-open leaf (offset ~0.9 and a block up), which
 +      // the walk simulation can never reach — the bot stands in the open doorway until 'stuck'
 +      const doorway = stateMovements && stateMovements.openable && b && stateMovements.openable.has(b.type)
-+      if (b && (b.type === waterType || doorway || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
++      const bamboo = b && b.name === 'bamboo'
++      if (b && (b.type === waterType || doorway || bamboo || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
          curPoint.z = Math.floor(curPoint.z) + 0.5
@@ -107,6 +108,15 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
+@@ -232,4 +232,5 @@
+     b.climbable = this.climbables.has(b.type)
+-    b.safe = (b.boundingBox === 'empty' || b.climbable || this.carpets.has(b.type)) && !this.blocksToAvoid.has(b.type)
+-    b.physical = b.boundingBox === 'block' && !this.fences.has(b.type)
++    const bamboo = b.name === 'bamboo'
++    b.safe = (b.boundingBox === 'empty' || b.climbable || this.carpets.has(b.type) || bamboo) && !this.blocksToAvoid.has(b.type)
++    b.physical = b.boundingBox === 'block' && !this.fences.has(b.type) && !bamboo
+     b.replaceable = this.replaceables.has(b.type) && !b.physical
+
 @@ -284,6 +284,7 @@
      cost += this.exclusionStep(block) // Is excluded so can't move or break
      cost += this.getNumEntitiesAt(block.position, 0, 0, 0) * this.entityCost
@@ -133,13 +143,20 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
        toPlace.push({ x: node.x + dir.x, y: node.y, z: node.z + dir.z, dx: 0, dy: 0, dz: 0, useOne: true }) // Indicate that a block should be used on this block not placed
      } else {
        cost += this.safeOrBreak(blockC, toBreak)
-@@ -406,6 +407,9 @@
+@@ -406,6 +407,16 @@
 
      const blockC = this.getBlock(node, dir.x, 0, dir.z) // Landing block or standing on block when jumping up by 1
      const y = blockC.physical ? 1 : 0
 +    // A diagonal jump can clip the corner of the raised block. Use the
 +    // cardinal jump instead, where the executor can approach it head-on.
 +    if (y === 1) return
++    // Avoid diagonal corner-cutting through bamboo's narrow stalk collision shape.
++    const bambooCrossing = [
++      [0, 0, dir.z], [0, 1, dir.z],
++      [dir.x, 0, 0], [dir.x, 1, 0],
++      [dir.x, 0, dir.z], [dir.x, 1, dir.z]
++    ].some(([dx, dy, dz]) => this.getBlock(node, dx, dy, dz).name === 'bamboo')
++    if (bambooCrossing) return
 
      const block0 = this.getBlock(node, 0, -1, 0)
 
