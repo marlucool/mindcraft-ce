@@ -108,7 +108,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
-@@ -232,4 +232,5 @@
+@@ -232,5 +232,6 @@
      b.climbable = this.climbables.has(b.type)
 -    b.safe = (b.boundingBox === 'empty' || b.climbable || this.carpets.has(b.type)) && !this.blocksToAvoid.has(b.type)
 -    b.physical = b.boundingBox === 'block' && !this.fences.has(b.type)
