@@ -221,7 +221,10 @@ test('giveToPlayer catches an immediate collection event fired while tossing', a
     };
     bot.inventory.findInventoryItem = name => heldItem?.name === name ? heldItem : null;
     bot.toss = async () => {
-        bot.emit('playerCollect', bot.players.Alex.entity, { name: 'oak_log' });
+        bot.emit('playerCollect', bot.players.Alex.entity, {
+            name: 'item',
+            getDroppedItem: () => ({ name: 'oak_log' }),
+        });
         heldItem = null;
     };
 

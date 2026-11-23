@@ -1106,7 +1106,8 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
     await bot.lookAt(player.position);
     let given = false;
     const onPlayerCollect = (collector, collected) => {
-        if (collector?.username === username && collected?.name === itemType) {
+        const droppedItem = collected?.getDroppedItem?.();
+        if (collector?.username === username && droppedItem?.name === itemType) {
             log(bot, `${username} received ${itemType}.`);
             given = true;
         }
