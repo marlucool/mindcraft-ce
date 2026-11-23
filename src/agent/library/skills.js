@@ -560,7 +560,8 @@ export async function pickupNearbyItems(bot) {
         let movements = new pf.Movements(bot);
         movements.canDig = false;
         bot.pathfinder.setMovements(movements);
-        await goToGoal(bot, new pf.goals.GoalFollow(nearestItem, 1));
+        const reachedItem = await goToGoal(bot, new pf.goals.GoalFollow(nearestItem, 1));
+        if (!reachedItem || bot.interrupt_code) break;
         await new Promise(resolve => setTimeout(resolve, 200));
         let prev = nearestItem;
         nearestItem = getNearestItem(bot);
@@ -569,8 +570,15 @@ export async function pickupNearbyItems(bot) {
         }
         pickedUp++;
     }
-    log(bot, `Picked up ${pickedUp} items.`);
-    return true;
+    const completed = pickedUp > 0 && !bot.interrupt_code;
+    if (completed) {
+        log(bot, `Picked up ${pickedUp} items.`);
+    } else {
+        log(bot, bot.interrupt_code
+            ? 'Item collection was interrupted.'
+            : 'No items were picked up.');
+    }
+    return completed;
 }
 
 
@@ -1312,8 +1320,7 @@ export async function goToNearestBlock(bot, blockType,  min_distance=2, range=64
         return false;
     }
     log(bot, `Found ${blockType} at ${block.position}. Navigating...`);
-    await goToPosition(bot, block.position.x, block.position.y, block.position.z, min_distance);
-    return true;
+    return await goToPosition(bot, block.position.x, block.position.y, block.position.z, min_distance);
 }
 
 export async function goToNearestEntity(bot, entityType, min_distance=2, range=64) {
@@ -1332,8 +1339,7 @@ export async function goToNearestEntity(bot, entityType, min_distance=2, range=6
     }
     let distance = bot.entity.position.distanceTo(entity.position);
     log(bot, `Found ${entityType} ${distance} blocks away.`);
-    await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z, min_distance);
-    return true;
+    return await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z, min_distance);
 }
 
 export async function goToPlayer(bot, username, distance=3) {
@@ -1367,9 +1373,18 @@ export async function goToPlayer(bot, username, distance=3) {
     distance = Math.max(distance, 0.5);
     const goal = new pf.goals.GoalFollow(player, distance);
 
-    await goToGoal(bot, goal, true);
-
-    log(bot, `You have reached ${username}.`);
+    try {
+        const reached = await goToGoal(bot, goal);
+        if (!reached || bot.interrupt_code) {
+            log(bot, `Could not reach ${username}.`);
+            return false;
+        }
+        log(bot, `You have reached ${username}.`);
+        return true;
+    } catch (error) {
+        log(bot, `Could not reach ${username}: ${error.message}.`);
+        return false;
+    }
 }
 
 

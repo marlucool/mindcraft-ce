@@ -6,7 +6,7 @@ import { Vec3 } from 'vec3';
 import settings from '../settings.js';
 import { setSettings } from '../src/agent/settings.js';
 import { initBot } from '../src/utils/mcdata.js';
-import { moveAway, moveAwayFromEntity, avoidEnemies, stay } from '../src/agent/library/skills.js';
+import { moveAway, moveAwayFromEntity, avoidEnemies, stay, goToNearestBlock, goToNearestEntity, goToPlayer, pickupNearbyItems } from '../src/agent/library/skills.js';
 
 const VERSION = '1.21.11';
 const registry = minecraftData(VERSION);
@@ -133,4 +133,52 @@ test('stay rejects invalid durations without pausing modes', async () => {
     assert.equal(await stay(bot, -2), false);
     assert.equal(await stay(bot, Number.NaN), false);
     assert.deepEqual(paused, []);
+});
+
+
+test('goToNearestBlock propagates a failed navigation result', async () => {
+    const bot = fakeBot();
+    const info = registry.blocksByName.oak_log;
+    const block = { name: 'oak_log', type: info.id, position: new Vec3(10, 64, 0) };
+    bot.findBlocks = ({ matching }) => matching.includes(block.type) ? [block.position] : [];
+    bot.blockAt = () => block;
+    bot.pathfinder.goto = async () => { throw new Error('NoPath'); };
+
+    assert.equal(await goToNearestBlock(bot, 'oak_log', 2, 64), false);
+});
+
+test('goToNearestEntity propagates a failed navigation result', async () => {
+    const bot = fakeBot();
+    const target = { name: 'cow', position: new Vec3(10, 64, 0) };
+    bot.nearestEntity = predicate => predicate(target) ? target : null;
+    bot.pathfinder.goto = async () => { throw new Error('NoPath'); };
+
+    assert.equal(await goToNearestEntity(bot, 'cow', 2, 64), false);
+});
+
+test('goToPlayer returns false instead of claiming success when navigation fails', async () => {
+    const bot = fakeBot();
+    bot.username = 'MovementTest';
+    bot.players = { Alex: { entity: { username: 'Alex', position: new Vec3(10, 64, 0) } } };
+    bot.modes.pause = () => {};
+    bot.pathfinder.goto = async () => { throw new Error('NoPath'); };
+
+    assert.equal(await goToPlayer(bot, 'Alex', 3), false);
+    assert.match(bot.output, /Could not reach Alex/);
+});
+
+test('goToPlayer returns true only when the pathfinder reports completion', async () => {
+    const bot = fakeBot();
+    bot.username = 'MovementTest';
+    bot.players = { Alex: { entity: { username: 'Alex', position: new Vec3(10, 64, 0) } } };
+    bot.modes.pause = () => {};
+
+    assert.equal(await goToPlayer(bot, 'Alex', 3), true);
+    assert.match(bot.output, /You have reached Alex/);
+});
+
+test('pickupNearbyItems returns false when no item is nearby', async () => {
+    const bot = fakeBot();
+    bot.nearestEntity = () => null;
+    assert.equal(await pickupNearbyItems(bot), false);
 });
