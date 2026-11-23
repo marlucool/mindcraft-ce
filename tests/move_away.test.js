@@ -7,7 +7,7 @@ import { Vec3 } from 'vec3';
 import settings from '../settings.js';
 import { setSettings } from '../src/agent/settings.js';
 import { initBot } from '../src/utils/mcdata.js';
-import { moveAway, moveAwayFromEntity, avoidEnemies, stay, goToNearestBlock, goToNearestEntity, goToPlayer, pickupNearbyItems, putInChest, goToSurface, giveToPlayer, attackEntity } from '../src/agent/library/skills.js';
+import { moveAway, moveAwayFromEntity, avoidEnemies, stay, goToNearestBlock, goToNearestEntity, goToPlayer, pickupNearbyItems, putInChest, goToSurface, giveToPlayer, attackEntity, wait, discard } from '../src/agent/library/skills.js';
 
 const VERSION = '1.21.11';
 const registry = minecraftData(VERSION);
@@ -237,4 +237,40 @@ test('attackEntity returns true after a successful non-lethal attack', async () 
 
     assert.equal(await attackEntity(bot, target, false), true);
     assert.equal(attacked, true);
+});
+
+
+test('wait rejects negative and non-finite durations', async () => {
+    const bot = fakeBot();
+    assert.equal(await wait(bot, -1), false);
+    assert.equal(await wait(bot, Number.NaN), false);
+    assert.equal(await wait(bot, Number.POSITIVE_INFINITY), false);
+    assert.equal(await wait(bot, 0), true);
+});
+
+test('discard rejects zero, negative and fractional counts without tossing', async () => {
+    const bot = fakeBot();
+    let tossCalls = 0;
+    bot.inventory.findInventoryItem = () => ({
+        name: 'oak_log',
+        type: registry.itemsByName.oak_log.id,
+        count: 4,
+    });
+    bot.toss = async () => { tossCalls++; };
+
+    assert.equal(await discard(bot, 'oak_log', 0), false);
+    assert.equal(await discard(bot, 'oak_log', -2), false);
+    assert.equal(await discard(bot, 'oak_log', 1.5), false);
+    assert.equal(await discard(bot, 'oak_log', Number.NaN), false);
+    assert.equal(tossCalls, 0);
+});
+
+test('avoidEnemies rejects an invalid distance without pausing self-preservation', async () => {
+    const bot = fakeBot();
+    let pauseCalls = 0;
+    bot.modes.pause = () => { pauseCalls++; };
+
+    assert.equal(await avoidEnemies(bot, 0), false);
+    assert.equal(await avoidEnemies(bot, Number.NaN), false);
+    assert.equal(pauseCalls, 0);
 });

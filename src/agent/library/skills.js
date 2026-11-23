@@ -139,6 +139,12 @@ export async function wait(bot, milliseconds) {
      * @example
      * await skills.wait(bot, 1000);
      **/
+    if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+        log(bot, 'Wait duration must be a non-negative finite number.');
+        return false;
+    }
+    if (bot.interrupt_code) return false;
+
     // setTimeout is disabled to prevent unawaited code, so this is a safe alternative that enables interrupts
     let timeLeft = milliseconds;
     let startTime = Date.now();
@@ -886,6 +892,12 @@ export async function discard(bot, itemName, num=-1) {
      * @example
      * await skills.discard(bot, "oak_log");
      **/
+    if (typeof itemName !== 'string' || itemName.length === 0 ||
+        !(num === -1 || (Number.isSafeInteger(num) && num > 0))) {
+        log(bot, 'Discard amount must be a positive whole number or -1 to discard all.');
+        return false;
+    }
+
     let discarded = 0;
     while (true) {
         let item = bot.inventory.findInventoryItem(itemName);
@@ -1583,6 +1595,10 @@ export async function avoidEnemies(bot, distance=16) {
      * @example
      * await skills.avoidEnemies(bot, 8);
      **/
+    if (!Number.isFinite(distance) || distance <= 0) {
+        log(bot, 'Enemy avoidance distance must be a positive finite number.');
+        return false;
+    }
     bot.modes.pause('self_preservation'); // prevents damage-on-low-health from interrupting the bot
     let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), distance);
     while (enemy && !bot.interrupt_code) {
