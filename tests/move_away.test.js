@@ -6,7 +6,7 @@ import { Vec3 } from 'vec3';
 import settings from '../settings.js';
 import { setSettings } from '../src/agent/settings.js';
 import { initBot } from '../src/utils/mcdata.js';
-import { moveAway, moveAwayFromEntity, avoidEnemies, stay, goToNearestBlock, goToNearestEntity, goToPlayer, pickupNearbyItems } from '../src/agent/library/skills.js';
+import { moveAway, moveAwayFromEntity, avoidEnemies, stay, goToNearestBlock, goToNearestEntity, goToPlayer, pickupNearbyItems, putInChest, goToSurface } from '../src/agent/library/skills.js';
 
 const VERSION = '1.21.11';
 const registry = minecraftData(VERSION);
@@ -181,4 +181,27 @@ test('pickupNearbyItems returns false when no item is nearby', async () => {
     const bot = fakeBot();
     bot.nearestEntity = () => null;
     assert.equal(await pickupNearbyItems(bot), false);
+});
+
+
+test('putInChest does not open a chest when navigation fails', async () => {
+    const bot = fakeBot();
+    const info = registry.blocksByName.chest;
+    const chest = { name: 'chest', type: info.id, position: new Vec3(10, 64, 0) };
+    bot.findBlocks = ({ matching }) => matching.includes(chest.type) ? [chest.position] : [];
+    bot.blockAt = () => chest;
+    bot.inventory.findInventoryItem = () => ({ name: 'oak_log', type: registry.itemsByName.oak_log.id, count: 4 });
+    bot.pathfinder.goto = async () => { throw new Error('NoPath'); };
+    bot.openContainer = async () => { assert.fail('must not open an unreachable chest'); };
+
+    assert.equal(await putInChest(bot, 'oak_log'), false);
+});
+
+test('goToSurface reports false when the surface cannot be reached', async () => {
+    const bot = fakeBot();
+    const surface = { name: 'stone', position: new Vec3(0, 70, 0) };
+    bot.blockAt = pos => pos.y === 70 ? surface : { name: 'air', position: pos };
+    bot.pathfinder.goto = async () => { throw new Error('NoPath'); };
+
+    assert.equal(await goToSurface(bot), false);
 });

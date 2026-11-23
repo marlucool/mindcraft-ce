@@ -101,7 +101,12 @@ export async function craftRecipe(bot, itemName, num=1) {
     }
     
     if (craftingTable && bot.entity.position.distanceTo(craftingTable.position) > 4) {
-        await goToNearestBlock(bot, 'crafting_table', 4, craftingTableRange);
+        const reachedTable = await goToNearestBlock(bot, 'crafting_table', 4, craftingTableRange);
+        if (!reachedTable) {
+            if (placedTable) await collectBlock(bot, 'crafting_table', 1);
+            log(bot, 'Could not reach the crafting table.');
+            return false;
+        }
     }
 
     const recipe = recipes[0];
@@ -186,7 +191,12 @@ export async function smeltItem(bot, itemName, num=1) {
         return false;
     }
     if (bot.entity.position.distanceTo(furnaceBlock.position) > 4) {
-        await goToNearestBlock(bot, 'furnace', 4, furnaceRange);
+        const reachedFurnace = await goToNearestBlock(bot, 'furnace', 4, furnaceRange);
+        if (!reachedFurnace) {
+            if (placedFurnace) await collectBlock(bot, 'furnace', 1);
+            log(bot, 'Could not reach the furnace.');
+            return false;
+        }
     }
     bot.modes.pause('unstuck');
     await bot.lookAt(furnaceBlock.position);
@@ -297,7 +307,11 @@ export async function clearNearestFurnace(bot) {
         return false;
     }
     if (bot.entity.position.distanceTo(furnaceBlock.position) > 4) {
-        await goToNearestBlock(bot, 'furnace', 4, 32);
+        const reachedFurnace = await goToNearestBlock(bot, 'furnace', 4, 32);
+        if (!reachedFurnace) {
+            log(bot, 'Could not reach the furnace.');
+            return false;
+        }
     }
 
     console.log('clearing furnace...');
@@ -363,7 +377,7 @@ export async function attackEntity(bot, entity, kill=true) {
     if (!kill) {
         if (bot.entity.position.distanceTo(pos) > 5) {
             console.log('moving to mob...')
-            await goToPosition(bot, pos.x, pos.y, pos.z);
+            if (!await goToPosition(bot, pos.x, pos.y, pos.z)) return false;
         }
         console.log('attacking mob...')
         await bot.attack(entity);
@@ -513,7 +527,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
                 success = await useToolOnBlock(bot, 'bucket', block);
             }
             else if (mc.mustCollectManually(blockType)) {
-                await goToPosition(bot, block.position.x, block.position.y, block.position.z, 2);
+                if (!await goToPosition(bot, block.position.x, block.position.y, block.position.z, 2)) return false;
                 await bot.dig(block);
                 await pickupNearbyItems(bot);
                 success = true;
@@ -913,7 +927,10 @@ export async function putInChest(bot, itemName, num=-1) {
         return false;
     }
     let to_put = num === -1 ? item.count : Math.min(num, item.count);
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Could not reach the chest.');
+        return false;
+    }
     const chestContainer = await bot.openContainer(chest);
     await chestContainer.deposit(item.type, null, to_put);
     await chestContainer.close();
@@ -936,7 +953,10 @@ export async function takeFromChest(bot, itemName, num=-1) {
         log(bot, `Could not find a chest nearby.`);
         return false;
     }
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Could not reach the chest.');
+        return false;
+    }
     const chestContainer = await bot.openContainer(chest);
     
     // Find all matching items in the chest
@@ -980,7 +1000,10 @@ export async function viewChest(bot) {
         log(bot, `Could not find a chest nearby.`);
         return false;
     }
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Could not reach the chest.');
+        return false;
+    }
     const chestContainer = await bot.openContainer(chest);
     let items = chestContainer.containerItems();
     if (items.length === 0) {
@@ -1041,10 +1064,10 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
         log(bot, `Could not find ${username}.`);
         return false;
     }
-    await goToPlayer(bot, username, 3);
+    if (!await goToPlayer(bot, username, 3)) return false;
     // if we are 2 below the player
     if (bot.entity.position.y < player.position.y - 1) {
-        await goToPlayer(bot, username, 1);
+        if (!await goToPlayer(bot, username, 1)) return false;
     }
     // if we are too close, make some distance
     if (bot.entity.position.distanceTo(player.position) < 2) {
@@ -1678,7 +1701,10 @@ export async function goToBed(bot) {
         return false;
     }
     let loc = beds[0];
-    await goToPosition(bot, loc.x, loc.y, loc.z);
+    if (!await goToPosition(bot, loc.x, loc.y, loc.z)) {
+        log(bot, 'Could not reach the bed.');
+        return false;
+    }
     const bed = bot.blockAt(loc);
     await bot.sleep(bed);
     log(bot, `You are in bed.`);
@@ -1738,7 +1764,7 @@ export async function tillAndSow(bot, x, y, z, seedType=null) {
     if (bot.entity.position.distanceTo(block.position) > 4.5) {
         let pos = block.position;
         bot.pathfinder.setMovements(new pf.Movements(bot));
-        await goToGoal(bot, new pf.goals.GoalNear(pos.x, pos.y, pos.z, 4));
+        if (!await goToGoal(bot, new pf.goals.GoalNear(pos.x, pos.y, pos.z, 4))) return false;
     }
     if (block.name !== 'farmland') {
         let hoe = bot.inventory.items().find(item => item.name.includes('hoe'));
@@ -1783,7 +1809,7 @@ export async function activateNearestBlock(bot, type) {
     if (bot.entity.position.distanceTo(block.position) > 4.5) {
         let pos = block.position;
         bot.pathfinder.setMovements(new pf.Movements(bot));
-        await goToGoal(bot, new pf.goals.GoalNear(pos.x, pos.y, pos.z, 4));
+        if (!await goToGoal(bot, new pf.goals.GoalNear(pos.x, pos.y, pos.z, 4))) return false;
     }
     await bot.activateBlock(block);
     log(bot, `Activated ${type} at x:${block.position.x.toFixed(1)}, y:${block.position.y.toFixed(1)}, z:${block.position.z.toFixed(1)}.`);
@@ -1838,9 +1864,11 @@ async function findAndGoToVillager(bot, id) {
         try {
             bot.modes.pause('unstuck');
             const goal = new pf.goals.GoalFollow(entity, 2);
-            await goToGoal(bot, goal);
-            
-            
+            const reached = await goToGoal(bot, goal);
+            if (!reached || bot.interrupt_code) {
+                log(bot, 'Failed to reach villager - navigation was interrupted or did not complete');
+                return null;
+            }
             log(bot, 'Successfully reached villager');
         } catch (err) {
             log(bot, 'Failed to reach villager - pathfinding error or villager moved');
@@ -2089,7 +2117,11 @@ export async function goToSurface(bot) {
         if (!block || block.name === 'air' || block.name === 'cave_air') {
             continue;
         }
-        await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 0); // this will probably work most of the time but a custom mining and towering up implementation could be added if needed
+        const reachedSurface = await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 0);
+        if (!reachedSurface) {
+            log(bot, 'Could not reach the surface.');
+            return false;
+        }
         log(bot, `Going to the surface at y=${y+1}.`);
         return true;
     }
@@ -2124,7 +2156,7 @@ export async function useToolOn(bot, toolName, targetName) {
             log(bot, `Could not find any ${targetName}.`);
             return false;
         }
-        await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z);
+        if (!await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z)) return false;
         if (toolName === 'hand') {
             await bot.unequip('hand');
         }
@@ -2169,7 +2201,7 @@ export async function useToolOn(bot, toolName, targetName) {
      */
 
     const distance = toolName === 'water_bucket' && block.name !== 'lava' ? 1.5 : 2;
-    await goToPosition(bot, block.position.x, block.position.y, block.position.z, distance);
+    if (!await goToPosition(bot, block.position.x, block.position.y, block.position.z, distance)) return false;
     await bot.lookAt(block.position.offset(0.5, 0.5, 0.5));
 
     // if block in view is closer than the target block, it is in our way. try to move closer
@@ -2185,7 +2217,7 @@ export async function useToolOn(bot, toolName, targetName) {
         log(bot, `Block ${blockInView.name} is in the way, moving closer...`);
         // choose random block next to target block, go to it
         const nearbyPos = block.position.offset(Math.random() * 2 - 1, 0, Math.random() * 2 - 1);
-        await goToPosition(bot, nearbyPos.x, nearbyPos.y, nearbyPos.z, 1);
+        if (!await goToPosition(bot, nearbyPos.x, nearbyPos.y, nearbyPos.z, 1)) return false;
         await bot.lookAt(block.position.offset(0.5, 0.5, 0.5));
         if (viewBlocked()) {
             const blockInView = bot.blockAtCursor(5);
