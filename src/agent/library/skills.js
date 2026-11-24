@@ -487,6 +487,14 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     const unsafeBlocks = ['obsidian'];
 
     for (let i=0; i<num; i++) {
+        // Do not start another collection attempt after an action has been interrupted.
+        // In particular, a PathStopped rejection must not be treated as an ordinary
+        // collection failure and retried against the same target.
+        if (bot.interrupt_code) {
+            log(bot, `Collection of ${blockType} interrupted.`);
+            break;
+        }
+
         let blocks = world.getNearestBlocksWhere(bot, block => {
             if (!blocktypes.includes(block.name)) {
                 return false;
@@ -548,6 +556,13 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             await autoLight(bot);
         }
         catch (err) {
+            // PathStopped is the expected signal when the agent, death handler, or
+            // operator interrupts pathfinding. Stop this skill instead of retrying.
+            // The interrupt flag also covers errors raised while cancellation is in flight.
+            if (bot.interrupt_code || err?.name === 'PathStopped' || err?.name === 'GoalChanged') {
+                log(bot, `Collection of ${blockType} interrupted: ${err?.message || err}.`);
+                break;
+            }
             if (err.name === 'NoChests') {
                 log(bot, `Failed to collect ${blockType}: Inventory full, no place to deposit.`);
                 break;
