@@ -28,6 +28,12 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+if (!(nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13))) {
+    console.error(`Unsupported Node.js ${process.versions.node}; this repository requires Node.js >=22.13.0.`);
+    process.exit(2);
+}
+
 const require = createRequire(import.meta.url);
 const collectBlockRuntimePath = join(dirname(require.resolve('mineflayer-collectblock')), 'CollectBlock.js');
 const collectBlockRuntime = readFileSync(collectBlockRuntimePath, 'utf8');
