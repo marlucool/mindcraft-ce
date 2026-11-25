@@ -266,6 +266,10 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mineflayer-pathfinder/lib/goals.js
 --- a/node_modules/mineflayer-pathfinder/lib/goals.js
 +++ b/node_modules/mineflayer-pathfinder/lib/goals.js
+@@ -174,3 +174,2 @@
+   isEnd (node) {
+-    if (node.distanceTo(this.pos.offset(0, this.entityHeight, 0)) > this.reach) return false
+     // Check faces that could be seen from the current position. If the delta is smaller then 0.5 that means the bot cam most likely not see the face as the block is 1 block thick
 @@ -212,8 +212,8 @@
      this.goal = new GoalLookAtBlock(new Vec3(x, y, z), bot, options)
    }

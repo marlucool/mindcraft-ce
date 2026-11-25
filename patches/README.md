@@ -26,7 +26,7 @@ backports the following changes from PrismarineJS master:
   and a raised block is climbed straight on. The walker can't cut a solid corner,
   so it stood still at every turn of a tunnel one block wide.
 
-Local changes clear a rejected goal, enable non-iron doors and fence gates, finish
+Local changes remove the feet-to-target distance precheck from `GoalLookAtBlock`; the raycast reach is measured from the bot's eye to each visible face, so reachable blocks above the bot are accepted. GoalBreakBlock forwards its candidate node to the same visibility check. Other local changes clear a rejected goal, enable non-iron doors and fence gates, finish
 door interaction state, release jump after placement, and allow escape from lava
 while restoring lava avoidance after leaving it. Pathfinder detects modern
 non-iron doors and fence gates by their block names rather than a stale list.
