@@ -305,3 +305,57 @@ test('collectBlock stops when Mineflayer aborts an active dig', async () => {
         `collectBlock must settle before the ${WATCHDOG_SECONDS}s watchdog (took ${elapsed}ms)`,
     );
 });
+
+test('collectBlock excludes an unreachable target and tries the next block', async () => {
+    const bot = createBot(['1,64,0', '2,64,0']);
+    const attempted = [];
+
+    bot.collectBlock.collect = async block => {
+        attempted.push(block.position.toString());
+        if (attempted.length === 1) {
+            throw new Error('NoPath');
+        }
+    };
+
+    const result = await collectBlock(bot, 'dirt', 1);
+
+    assert.equal(result, true);
+    assert.deepEqual(attempted, ['(1, 64, 0)', '(2, 64, 0)']);
+    assert.ok(bot.output.includes('Failed to collect dirt: Error: NoPath.'));
+    assert.ok(bot.output.includes('Collected 1 dirt.'));
+});
+
+test('collectBlock cancels and settles a timed-out target before trying another', async () => {
+    const bot = createBot(['1,64,0', '2,64,0']);
+    bot.collectBlockTimeoutMs = 15;
+
+    const attempted = [];
+    let rejectPendingCollection;
+    let cancelCalls = 0;
+
+    bot.collectBlock.collect = block => {
+        attempted.push(block.position.toString());
+        if (attempted.length === 1) {
+            return new Promise((resolve, reject) => {
+                rejectPendingCollection = () => {
+                    const error = new Error('Path stopped after timeout');
+                    error.name = 'PathStopped';
+                    reject(error);
+                };
+            });
+        }
+        return Promise.resolve();
+    };
+    bot.collectBlock.cancelTask = async () => {
+        cancelCalls++;
+        rejectPendingCollection();
+    };
+
+    const result = await collectBlock(bot, 'dirt', 1);
+
+    assert.equal(result, true);
+    assert.equal(cancelCalls, 1, 'the timed-out collection is cancelled once');
+    assert.deepEqual(attempted, ['(1, 64, 0)', '(2, 64, 0)']);
+    assert.ok(bot.output.includes('Timeout collecting dirt'));
+    assert.ok(bot.output.includes('Collected 1 dirt.'));
+});
