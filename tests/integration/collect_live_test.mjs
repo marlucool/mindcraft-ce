@@ -24,6 +24,18 @@ import { plugin as collectblock } from 'mineflayer-collectblock';
 import { plugin as tool } from 'mineflayer-tool';
 import { Vec3 } from 'vec3';
 import net from 'net';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+
+const require = createRequire(import.meta.url);
+const collectBlockRuntimePath = join(dirname(require.resolve('mineflayer-collectblock')), 'CollectBlock.js');
+const collectBlockRuntime = readFileSync(collectBlockRuntimePath, 'utf8');
+if (!collectBlockRuntime.includes('collectBlock_cancel')) {
+    console.error('The installed mineflayer-collectblock runtime is missing the pickup-cancellation patch.');
+    console.error('Run npm ci in this checkout so patch-package reapplies patches/mineflayer-collectblock+1.6.0.patch, then rerun this harness.');
+    process.exit(2);
+}
 
 // RCON client for the isolated test server (25566 / RCON 25576).
 function rcon(host, port, password, command) {
@@ -247,6 +259,63 @@ async function main() {
                     `harness selected a block ${startDistance.toFixed(1)} blocks away despite maxDistance=25`);
             } else {
                 const beforeType = target.type;
+                const movements = bot.collectBlock.movements;
+                const worldTargetBefore = bot.blockAt(target.position);
+                const safetyContext = () => {
+                    const current = bot.blockAt(target.position);
+                    const above = movements?.getBlock(target.position, 0, 1, 0);
+                    const sides = [
+                        movements?.getBlock(target.position, -1, 0, 0),
+                        movements?.getBlock(target.position, 1, 0, 0),
+                        movements?.getBlock(target.position, 0, 0, -1),
+                        movements?.getBlock(target.position, 0, 0, 1),
+                    ];
+                    return {
+                        worldBlock: current ? `${current.name}:${current.type}` : 'unloaded',
+                        targetType: target.type,
+                        safeToBreak: movements?.safeToBreak(target),
+                        canDig: movements?.canDig,
+                        dontCreateFlow: movements?.dontCreateFlow,
+                        dontMineUnderFallingBlock: movements?.dontMineUnderFallingBlock,
+                        inBlocksCantBreak: movements?.blocksCantBreak?.has(target.type),
+                        aboveIsLiquid: above?.liquid,
+                        aboveCanFall: above?.canFall,
+                        adjacentLiquid: sides.some(block => block?.liquid),
+                    };
+                };
+                console.log('  Test A target diagnostics:', JSON.stringify({
+                    start: bot.entity.position,
+                    target: target.position,
+                    targetType: target.type,
+                    worldTargetType: worldTargetBefore?.type,
+                    safety: safetyContext(),
+                }));
+
+                const originalSafeToBreak = movements?.safeToBreak?.bind(movements);
+                if (originalSafeToBreak) {
+                    movements.safeToBreak = block => {
+                        const safe = originalSafeToBreak(block);
+                        console.log(`  [collectblock safeToBreak] ${block.name}:${block.type} => ${safe}`);
+                        return safe;
+                    };
+                }
+
+                const originalEquipForBlock = bot.tool?.equipForBlock;
+                if (originalEquipForBlock) {
+                    bot.tool.equipForBlock = async function (...args) {
+                        console.log('  [collectblock tool] equipForBlock called for', args[0]?.name);
+                        const result = await originalEquipForBlock.apply(this, args);
+                        console.log('  [collectblock tool] heldItem:', bot.heldItem?.name ?? null);
+                        return result;
+                    };
+                }
+
+                const originalDig = bot.dig.bind(bot);
+                bot.dig = (...args) => {
+                    console.log('  [collectblock dig] called for', args[0]?.name, args[0]?.position);
+                    return originalDig(...args);
+                };
+
                 let timeoutHandle;
                 const attempt = bot.collectBlock.collect(target).then(
                     () => ({ ok: true }),
@@ -259,6 +328,10 @@ async function main() {
                     }),
                 ]);
                 clearTimeout(timeoutHandle);
+
+                bot.dig = originalDig;
+                if (originalEquipForBlock) bot.tool.equipForBlock = originalEquipForBlock;
+                if (originalSafeToBreak) movements.safeToBreak = originalSafeToBreak;
 
                 if (outcome.timeout) {
                     record('A: normal block collection', 'FAIL', 'collectBlock.collect(block) timed out after 15s');
@@ -274,7 +347,7 @@ async function main() {
                     const remaining = bot.blockAt(target.position);
                     if (remaining && remaining.type === beforeType) {
                         record('A: normal block collection', 'FAIL',
-                            'collectBlock resolved but the target block is still present');
+                            `collectBlock resolved but the target block is still present; diagnostics=${JSON.stringify(safetyContext())}`);
                     } else {
                         record('A: normal block collection', 'PASS',
                             `plugin navigated, mined ${target.name}, and settled in the expected block position`);
