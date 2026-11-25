@@ -54,7 +54,6 @@ function createHarness() {
     };
 
     bot.collectBlock = new CollectBlock(bot);
-    // The test is about collection lifecycle, not movement generation.
     bot.collectBlock.movements = null;
 
     return {
@@ -88,8 +87,8 @@ test('collectBlock completes normally when the exact item emits entityGone', asy
     bot.emit('entityGone', item);
 
     await withDeadline(collecting, 'normal item collection');
-    assert.equal(bot.listenerCount('collectBlock_cancel'), 0, 'pickup/cancel listeners are cleaned up');
-    assert.equal(bot.listenerCount('entityGone'), 0, 'entityGone listener is cleaned up');
+    assert.equal(bot.listenerCount('collectBlock_cancel'), 0, 'cancellation listener is cleaned up');
+    assert.equal(bot.listenerCount('entityGone'), 0, 'pickup listener is cleaned up');
 });
 
 test('cancelTask settles collection while waiting for item pickup', async () => {
@@ -109,25 +108,20 @@ test('cancelTask settles collection while waiting for item pickup', async () => 
     assert.equal(bot.listenerCount('collectBlock_finished'), 0, 'completion listener is removed');
 });
 
-test('cancelTask interrupts navigation as well as the subsequent pickup wait', async () => {
-    const { bot } = createHarness();
-    const item = new Entity();
-    const started = once(bot, 'test:goto-started');
-    // Keep goto pending so stop() rejects it with PathStopped.
+test('cancelTask interrupts navigation while goto is still pending', async () => {
     const harness = createHarness();
     harness.setGotoMode('pending');
-    const pendingBot = harness.bot;
-    const pendingStarted = once(pendingBot, 'test:goto-started');
+    const { bot } = harness;
+    const item = new Entity();
+    const started = once(bot, 'test:goto-started');
 
-    const collecting = pendingBot.collectBlock.collect(item);
-    await withDeadline(pendingStarted, 'pending pathfinder goto start');
-    const cancelling = pendingBot.collectBlock.cancelTask();
+    const collecting = bot.collectBlock.collect(item);
+    await withDeadline(started, 'pending pathfinder goto start');
+    const cancelling = bot.collectBlock.cancelTask();
 
     await withDeadline(Promise.all([collecting, cancelling]), 'navigation cancellation');
-    assert.equal(pendingBot.listenerCount('collectBlock_cancel'), 0);
-    assert.equal(pendingBot.listenerCount('entityGone'), 0);
-    void bot;
-    void started;
+    assert.equal(bot.listenerCount('collectBlock_cancel'), 0, 'cancellation listener is removed');
+    assert.equal(bot.listenerCount('entityGone'), 0, 'pickup listener is removed');
 });
 
 test('repeated cancellation settles and a later collection still succeeds', async () => {
