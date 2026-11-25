@@ -39,10 +39,10 @@ CE_TEST_RCON_PASSWORD='<password>' node --max-old-space-size=1024 \
 
 | Test | What it exercises |
 |------|-------------------|
-| A: normal collection | Collecting a real dropped item entity |
-| B: cancel while navigating | `cancelTask()` during pathfinding to a block |
+| A: normal block collection | Calling `collectBlock.collect(block)` and verifying the block is mined |
+| B: cancel during A* search | `cancelTask()` after a partial search result while no executable path exists |
 | C: cancel while digging | `bot.stopDigging()` during an active dig |
-| D: cancel while waiting for pickup | `cancelTask()` while the plugin is blocked on its internal `waitForPickup` |
+| D: cancel while waiting for pickup | `cancelTask()` after navigation has completed but before the target item despawns |
 
 The watchdog timeout in `src/agent/coder.js` is **not** modified by these tests;
 the harness bounds its own waits so a hang is reported rather than masked.
