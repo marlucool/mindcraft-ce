@@ -4,6 +4,7 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { readFileSync } from 'fs';
 import { parseBooleanEnv, parseIntegerEnv, parseJsonEnv, parseJsonObjectEnv } from './src/utils/env.js';
+import { applyStartupGoalOverride } from './src/utils/startup_goal.js';
 
 function parseArguments() {
     return yargs(hideBin(process.argv))
@@ -92,6 +93,8 @@ await Mindcraft.init(false, settings.mindserver_port, settings.auto_open_ui);
 
 for (let profile of settings.profiles) {
     const profile_json = JSON.parse(readFileSync(profile, 'utf8'));
+    // STARTUP_GOAL overrides this profile for the current process. Empty disables it.
+    applyStartupGoalOverride(profile_json, process.env.STARTUP_GOAL);
     settings.profile = profile_json;
     const result = await Mindcraft.createAgent(settings);
     if (!result.success) {
