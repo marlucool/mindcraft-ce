@@ -484,6 +484,9 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     const blockTimeoutMs = Number.isFinite(bot.collectBlockTimeoutMs) && bot.collectBlockTimeoutMs > 0
         ? bot.collectBlockTimeoutMs
         : 15000;
+    // Failed targets do not count toward the requested number of collected blocks.
+    // Bound retries so a broken world/plugin state cannot spin forever.
+    const maxBlockAttempts = Math.max(64, Math.ceil(num * 2));
 
     const movements = new pf.Movements(bot);
     movements.dontMineUnderFallingBlock = false;
@@ -492,7 +495,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     // Blocks to ignore safety for, usually next to lava/water
     const unsafeBlocks = ['obsidian'];
 
-    for (let i=0; i<num; i++) {
+    for (let i=0; i<maxBlockAttempts && collected<num; i++) {
         // Do not start another collection attempt after an action has been interrupted.
         // In particular, a PathStopped rejection must not be treated as an ordinary
         // collection failure and retried against the same target.
