@@ -147,6 +147,11 @@ export async function wait(bot, milliseconds) {
      * @example
      * await skills.wait(bot, 1000);
      **/
+    if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+        log(bot, 'Wait duration must be a non-negative finite number.');
+        return false;
+    }
+
     // setTimeout is disabled to prevent unawaited code, so this is a safe alternative that enables interrupts
     let timeLeft = milliseconds;
     let startTime = Date.now();
