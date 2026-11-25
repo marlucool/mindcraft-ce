@@ -272,3 +272,36 @@ test('collectBlock stops when interrupt_code is set while navigating to the bloc
         `collectBlock must settle before the ${WATCHDOG_SECONDS}s watchdog (took ${elapsed}ms)`,
     );
 });
+
+test('collectBlock stops when Mineflayer aborts an active dig', async () => {
+    const bot = createBot(['1,64,0', '2,64,0', '3,64,0']);
+    let attempts = 0;
+
+    bot.collectBlock.collect = async () => {
+        attempts++;
+        // Mineflayer stopDigging() rejects the active bot.dig() promise with
+        // Error('Digging aborted'), not a PathStopped error. requestInterrupt()
+        // sets interrupt_code before it calls stopDigging().
+        bot.interrupt_code = true;
+        throw new Error('Digging aborted');
+    };
+
+    const start = Date.now();
+    const result = await collectBlock(bot, 'dirt', 3);
+    const elapsed = Date.now() - start;
+
+    assert.equal(result, false);
+    assert.equal(attempts, 1, 'an interrupted dig must not be retried');
+    assert.ok(
+        bot.output.includes('Collection of dirt interrupted: Digging aborted.'),
+        `expected the Mineflayer interruption to be identified, got: ${bot.output}`,
+    );
+    assert.ok(
+        !bot.output.includes('Failed to collect dirt:'),
+        'a cancelled dig must not be treated as an ordinary collection failure',
+    );
+    assert.ok(
+        elapsed < WATCHDOG_SECONDS * 1000,
+        `collectBlock must settle before the ${WATCHDOG_SECONDS}s watchdog (took ${elapsed}ms)`,
+    );
+});
