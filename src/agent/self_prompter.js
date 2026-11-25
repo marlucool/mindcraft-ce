@@ -1,3 +1,5 @@
+import { getCommandDocs } from './commands/index.js';
+
 const STOPPED = 0
 const ACTIVE = 1
 const PAUSED = 2
@@ -9,7 +11,7 @@ export class SelfPrompter {
         this.interrupt = false;
         this.prompt = '';
         this.idle_time = 0;
-        this.cooldown = 2000;
+        this.cooldown = 2500;
     }
 
     start(prompt) {
@@ -63,7 +65,11 @@ export class SelfPrompter {
         let no_command_count = 0;
         const MAX_NO_COMMAND = 3;
         while (!this.interrupt) {
-            const msg = `You are self-prompting with the goal: '${this.prompt}'. Your next response MUST contain a command with this syntax: !commandName. Respond:`;
+            let commandDocs = getCommandDocs(this.agent);
+            commandDocs = commandDocs
+                .replace(/^!goal:.*$/gm, '')
+                .replace(/^\*\s*$/gm, '');
+            const msg = `You are self-prompting with the goal: '${this.prompt}'. Your next response MUST contain a command with this syntax: !commandName. Available commands: ${commandDocs} Respond: IMPORTANT: Any code you generate with !newAction will be automatically stopped after 10 minutes. Do not start endless loops or processes. Keep generated code short and ensure it finishes.`;
             
             let used_command = await this.agent.handleMessage('system', msg, -1);
             if (!used_command) {
