@@ -11,8 +11,8 @@
 //   CE_TEST_BOT           default CETestBot
 //   CE_TEST_VERSION       default 1.21.11
 //
-// The harness never writes to the production server (25565) and never modifies the
-// repository's tracked files.
+// The harness mutates only the isolated test server by preparing a small stone pad
+// and test blocks. It never writes to the production server (25565).
 // Connects a real bot to the isolated Paper server on 25566 and exercises:
 //   A. normal collection of a real block through collectBlock.collect(block)
 //   B. interruption while navigating to a block
@@ -112,15 +112,35 @@ async function makeBot(username) {
     return bot;
 }
 
-// Blocks that can be dug and drop an item. The bot spawns at a random point in a
-// bamboo/jungle biome, so the set is deliberately broad.
-const COLLECTABLE = ['dirt', 'grass_block', 'sand', 'gravel', 'stone', 'cobblestone', 'podzol', 'clay'];
+// Prepare a controlled, exposed target on a small stone pad in the isolated test
+// world. Random nearby blocks may be buried or occluded, which makes a collection
+// timeout ambiguous: it may be a bad target rather than a pathfinder regression.
+async function prepareTestBlock(bot, xOffset = 5, blockName = 'stone') {
+    const startX = Math.floor(bot.entity.position.x);
+    const y = Math.floor(bot.entity.position.y);
+    const z = Math.floor(bot.entity.position.z);
+    const target = new Vec3(startX + xOffset, y, z);
+    const minX = Math.min(startX, target.x) - 1;
+    const maxX = Math.max(startX, target.x) + 1;
 
-function findCollectable(bot, maxDistance = 20) {
-    return bot.findBlock({
-        matching: b => COLLECTABLE.includes(b.name),
-        maxDistance,
-    });
+    const commands = [
+        `fill ${minX} ${y - 1} ${z - 1} ${maxX} ${y - 1} ${z + 1} stone`,
+        `fill ${minX} ${y} ${z - 1} ${maxX} ${y + 2} ${z + 1} air`,
+        `setblock ${target.x} ${target.y} ${target.z} ${blockName} replace`,
+    ];
+    for (const command of commands) {
+        const result = await rcon(HOST, RCON_PORT, RCON_PASSWORD, command);
+        if (/Unknown command|Syntax error|Failed to execute/i.test(result)) {
+            throw new Error(`test-world setup failed for "${command}": ${result.trim()}`);
+        }
+    }
+
+    for (let attempt = 0; attempt < 40; attempt++) {
+        const block = bot.blockAt(target);
+        if (block && block.name === blockName) return block;
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error(`test block ${blockName} did not appear at ${target}`);
 }
 
 // Wait for a dropped item entity to appear near a position
@@ -170,7 +190,7 @@ async function main() {
     // Exercise the same public API used by skills.collectBlock(): pass the block
     // to collectblock and let the plugin navigate, dig, and gather the drop.
     try {
-        const target = findCollectable(bot, 25);
+        const target = await prepareTestBlock(bot, 5, 'stone');
         if (!target) {
             record('A: normal block collection', 'SKIP', 'no collectable block within 25 blocks');
         } else {
@@ -225,7 +245,7 @@ async function main() {
     // pick it up. Observe the exact GoalFollow goal and exact target entityGone event;
     // unrelated item despawns must not make this test pass.
     try {
-        const block = findCollectable(bot, 25);
+        const block = await prepareTestBlock(bot, 5, 'dirt');
         if (!block) {
             record('D: cancel while waiting for pickup', 'SKIP', 'no collectable block available');
         } else {
@@ -331,7 +351,7 @@ async function main() {
 
     // ---- Test B: interrupt while the pathfinder is still searching (no path yet) ----
     try {
-        const target = findCollectable(bot, 30);
+        const target = await prepareTestBlock(bot, 12, 'stone');
         if (!target) {
             record('B: cancel during A* search', 'SKIP', 'no collectable block available');
         } else {
@@ -417,7 +437,7 @@ async function main() {
 
     // ---- Test C: interruption while digging ----
     try {
-        const dirt = findCollectable(bot, 25);
+        const dirt = await prepareTestBlock(bot, 4, 'stone');
         if (!dirt) {
             record('C: cancel while digging', 'SKIP', 'no collectable block available');
         } else {
