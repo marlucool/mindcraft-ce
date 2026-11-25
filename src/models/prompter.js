@@ -59,6 +59,19 @@ export class Prompter {
         let chat_model_profile = selectAPI(this.profile.model);
         this.chat_model = createModel(chat_model_profile);
 
+        // Optional backup model. Keep it separate from chat/code models so the
+        // fallback helper can be used consistently without replacing user config.
+        this.backup_model = null;
+        if (this.profile.backup_model) {
+            try {
+                const backupModelProfile = selectAPI(this.profile.backup_model);
+                this.backup_model = createModel(backupModelProfile);
+                console.log('Backup model loaded:', this.profile.backup_model.model);
+            } catch (error) {
+                console.warn('Could not load configured backup model:', error?.message || error);
+            }
+        }
+
         if (this.profile.code_model) {
             let code_model_profile = selectAPI(this.profile.code_model);
             this.code_model = createModel(code_model_profile);
@@ -211,6 +224,47 @@ export class Prompter {
         this.last_prompt_time = Date.now();
     }
 
+    async _sendWithFallback(messages, prompt, primaryModel = this.chat_model, purpose = 'chat', shouldContinue = null) {
+        const primaryName = primaryModel === this.code_model
+            ? (this.profile.code_model?.model || this.profile.model.model)
+            : this.profile.model.model;
+        const models = [{ model: primaryModel, name: primaryName || 'primary model' }];
+
+        if (this.backup_model && this.backup_model !== primaryModel) {
+            models.push({
+                model: this.backup_model,
+                name: this.profile.backup_model?.model || 'backup model'
+            });
+        }
+
+        for (const candidate of models) {
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                if (shouldContinue && !shouldContinue()) return '';
+                await this.checkCooldown();
+                try {
+                    const generation = await candidate.model.sendRequest(messages, prompt);
+                    if (typeof generation !== 'string') {
+                        throw new Error(`Model returned a non-string ${purpose} response`);
+                    }
+                    console.log(`Generated ${purpose} response (${candidate.name}):`, generation);
+                    return generation;
+                } catch (error) {
+                    console.error(
+                        `Model request failed (${candidate.name}, ${purpose}, attempt ${attempt}/3):`,
+                        error?.message || error
+                    );
+                }
+            }
+
+            if (candidate.model === this.chat_model && this.backup_model && this.backup_model !== primaryModel) {
+                console.warn(`Primary model failed three times; switching to backup model ${this.profile.backup_model?.model || ''}.`);
+            }
+        }
+
+        console.error(`No configured model could complete the ${purpose} request.`);
+        return '';
+    }
+
     async promptConvo(messages) {
         this.most_recent_msg_time = Date.now();
         let current_msg_time = this.most_recent_msg_time;
@@ -226,16 +280,19 @@ export class Prompter {
             let generation;
 
             try {
-                generation = await this.chat_model.sendRequest(messages, prompt);
-                if (typeof generation !== 'string') {
-                    console.error('Error: Generated response is not a string', generation);
-                    throw new Error('Generated response is not a string');
+                generation = await this._sendWithFallback(
+                    messages,
+                    prompt,
+                    this.chat_model,
+                    'conversation',
+                    () => current_msg_time === this.most_recent_msg_time
+                );
+                if (current_msg_time !== this.most_recent_msg_time) {
+                    return '';
                 }
-                console.log("Generated response:", generation);
                 await this._saveLog(prompt, messages, generation, 'conversation');
-
             } catch (error) {
-                console.error('Error during message generation or file writing:', error);
+                console.error('Error saving conversation response:', error?.message || error);
                 continue;
             }
 
@@ -271,17 +328,20 @@ export class Prompter {
         let prompt = this.profile.coding;
         prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
 
-        let resp = await this.code_model.sendRequest(messages, prompt);
-        this.awaiting_coding = false;
-        await this._saveLog(prompt, messages, resp, 'coding');
-        return resp;
+        try {
+            const resp = await this._sendWithFallback(messages, prompt, this.code_model, 'coding');
+            await this._saveLog(prompt, messages, resp, 'coding');
+            return resp;
+        } finally {
+            this.awaiting_coding = false;
+        }
     }
 
     async promptMemSaving(to_summarize) {
         await this.checkCooldown();
         let prompt = this.profile.saving_memory;
         prompt = await this.replaceStrings(prompt, null, null, to_summarize);
-        let resp = await this.chat_model.sendRequest([], prompt);
+        let resp = await this._sendWithFallback([], prompt, this.chat_model, 'memory summary');
         await this._saveLog(prompt, to_summarize, resp, 'memSaving');
         if (resp?.includes('</think>')) {
             const [_, afterThink] = resp.split('</think>')
@@ -296,7 +356,7 @@ export class Prompter {
         let messages = this.agent.history.getHistory();
         messages.push({role: 'user', content: new_message});
         prompt = await this.replaceStrings(prompt, null, null, messages);
-        let res = await this.chat_model.sendRequest([], prompt);
+        let res = await this._sendWithFallback([], prompt, this.chat_model, 'bot responder');
         return res.trim().toLowerCase() === 'respond';
     }
 
@@ -317,7 +377,7 @@ export class Prompter {
         user_message = await this.replaceStrings(user_message, messages, null, null, last_goals);
         let user_messages = [{role: 'user', content: user_message}];
 
-        let res = await this.chat_model.sendRequest(user_messages, system_message);
+        let res = await this._sendWithFallback(user_messages, system_message, this.chat_model, 'goal setting');
 
         let goal = null;
         try {
