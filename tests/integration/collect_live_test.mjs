@@ -230,17 +230,24 @@ async function prepareTestBlock(bot, xOffset = 5, blockName = 'stone') {
     const z = Math.floor(bot.entity.position.z);
     const target = new Vec3(startX + xOffset, y, z);
 
-    // Keep a two-block dry buffer around the target. The previous one-block
-    // clearing region allowed water outside the pad to flow back into an
-    // adjacent cell before collectblock performed its safeToBreak check.
+    // Build a sealed test chamber instead of relying on a short dry-buffer
+    // check. A nearby natural water source can flow back into an exposed pad
+    // between setup and collectblock's safeToBreak check. The hollow fill makes
+    // a solid floor, four walls, and a roof, while clearing a three-block-high
+    // interior containing both the bot and target.
     const minX = Math.min(startX, target.x) - 2;
     const maxX = Math.max(startX, target.x) + 2;
     const minZ = z - 2;
     const maxZ = z + 2;
+    const chamberMinX = minX - 1;
+    const chamberMaxX = maxX + 1;
+    const chamberMinY = y - 1;
+    const chamberMaxY = y + 3;
+    const chamberMinZ = minZ - 1;
+    const chamberMaxZ = maxZ + 1;
 
     const commands = [
-        `fill ${minX} ${y - 1} ${minZ} ${maxX} ${y - 1} ${maxZ} stone`,
-        `fill ${minX} ${y} ${minZ} ${maxX} ${y + 2} ${maxZ} air`,
+        `fill ${chamberMinX} ${chamberMinY} ${chamberMinZ} ${chamberMaxX} ${chamberMaxY} ${chamberMaxZ} stone hollow`,
         `setblock ${target.x} ${target.y} ${target.z} ${blockName} replace`,
     ];
     for (const command of commands) {
@@ -280,11 +287,11 @@ async function prepareTestBlock(bot, xOffset = 5, blockName = 'stone') {
         const surroundingsReady = lastSafety.every(block => block.name !== 'unloaded' && !block.liquid);
         if (targetReady && surroundingsReady) {
             consecutiveDrySamples++;
-            if (consecutiveDrySamples >= 3) return lastBlock;
+            if (consecutiveDrySamples >= 5) return lastBlock;
         } else {
             consecutiveDrySamples = 0;
         }
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     throw new Error(`test block ${blockName} or dry surroundings did not stabilize at ${target}; block=${lastBlock?.name ?? 'unloaded'}; surroundings=${JSON.stringify(lastSafety)}`);
