@@ -139,6 +139,14 @@ export class Agent {
                     }
                 }
 
+                // Restore the production bot's configured autonomous startup goal
+                // only when no saved self-prompt or externally supplied task exists.
+                const startupGoal = this.prompter.profile.startup_goal;
+                if (!save_data?.self_prompt && !settings.task &&
+                    typeof startupGoal === 'string' && startupGoal.trim()) {
+                    await this.self_prompter.start(startupGoal);
+                }
+
                 await new Promise((resolve) => setTimeout(resolve, 10000));
                 this.checkAllPlayersPresent();
 
