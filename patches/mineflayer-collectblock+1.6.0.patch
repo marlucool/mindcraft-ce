@@ -19,8 +19,9 @@ diff --git a/node_modules/mineflayer-collectblock/lib/CollectBlock.js b/node_mod
                      yield mineBlock(bot, closest, options);
                      // TODO: options.ignoreNoPath
                      break;
-@@ -45,16 +54,25 @@
+@@ -45,17 +54,26 @@
                  case 'Entity': {
+                     // Don't collect any entities that are marked as 'invalid'
                      if (!closest.isValid)
                          break;
                      const tempEvents = new TemporarySubscriber_1.TemporarySubscriber(bot);
