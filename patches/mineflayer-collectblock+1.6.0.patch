@@ -59,7 +59,7 @@ diff --git a/node_modules/mineflayer-collectblock/lib/CollectBlock.js b/node_mod
                  this.bot.pathfinder.setMovements(this.movements);
              }
              if (!optionsFull.append)
-@@ -245,14 +261,16 @@
+@@ -245,15 +261,17 @@
      cancelTask(cb) {
          return __awaiter(this, void 0, void 0, function* () {
              if (this.targets.empty) {
@@ -68,11 +68,16 @@ diff --git a/node_modules/mineflayer-collectblock/lib/CollectBlock.js b/node_mod
                  return yield Promise.resolve();
              }
 +            const finished = (0, events_1.once)(this.bot, 'collectBlock_finished');
-             if (cb != null) {
-                 this.bot.once('collectBlock_finished', cb);
-             }
++            if (cb != null) {
++                // @ts-expect-error
++                this.bot.once('collectBlock_finished', cb);
++            }
 +            this.bot.emit('collectBlock_cancel');
              this.bot.pathfinder.stop();
+-            if (cb != null) {
+-                // @ts-expect-error
+-                this.bot.once('collectBlock_finished', cb);
+-            }
 -            yield (0, events_1.once)(this.bot, 'collectBlock_finished');
 +            yield finished;
          });
