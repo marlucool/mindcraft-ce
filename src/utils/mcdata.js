@@ -336,7 +336,7 @@ export function getItemCraftingRecipes(itemName) {
         'acacia_planks', 'dark_oak_planks', 'mangrove_planks', 'bamboo_planks',
         'cherry_planks', 'pale_oak_planks', 'crimson_planks', 'warped_planks',
         'oak_log', 'spruce_log', 'birch_log', 'jungle_log',
-        'acacia_log', 'dark_oak_log', 'mangrove_log', 'bamboo_log',
+        'acacia_log', 'dark_oak_log', 'mangrove_log', 'bamboo_block',
         'cherry_log', 'pale_oak_log', 'crimson_stem', 'warped_stem',
         'coal', 'cobblestone'
     ];
