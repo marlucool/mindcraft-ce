@@ -1,0 +1,9 @@
+{
+    "name": "CornBot",
+    "model": {
+        "api": "openai",
+        "model": "nvidia/nemotron-3.5-bolt-e4b",
+        "url": "https://aperture.swordfish-kettle.ts.net/v1"
+    },
+    "embedding": null
+}
