@@ -9,7 +9,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
      const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout })
      const { value: { result, astarContext: context } } = generator.next()
      astarContext = context
-@@ -160,6 +161,11 @@
+@@ -160,6 +161,12 @@
    }
 
    bot.pathfinder.stop = () => {
@@ -22,7 +22,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
 +    if (path.length === 0) resetPath('stopped')
    }
 
-@@ -168,9 +174,17 @@
+@@ -168,9 +175,17 @@
    function postProcessPath (path) {
      for (let i = 0; i < path.length; i++) {
        const curPoint = path[i]
