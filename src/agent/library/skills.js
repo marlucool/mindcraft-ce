@@ -33,6 +33,80 @@ async function equipHighestAttack(bot) {
         await bot.equip(weapon, 'hand');
 }
 
+function hasBowAndArrows(bot) {
+    return bot.inventory.items().some(item => item.name === 'bow') &&
+        bot.inventory.items().some(item => item.name.includes('arrow'));
+}
+
+// mineflayer-pvp performs melee attacks only. Shoot a fully drawn bow directly
+// rather than equipping a bow and accidentally asking the melee plugin to attack.
+async function shootBowAt(bot, entity) {
+    const bow = bot.inventory.items().find(item => item.name === 'bow');
+    if (!bow || !bot.inventory.items().some(item => item.name.includes('arrow'))) {
+        return false;
+    }
+
+    await bot.equip(bow, 'hand');
+    const targetHeight = Number.isFinite(entity.height) ? entity.height * 0.7 : 1;
+    await bot.lookAt(entity.position.offset(0, targetHeight, 0), true);
+    bot.activateItem();
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    bot.deactivateItem();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return true;
+}
+
+async function moveAwayFromCreeper(bot, creeper, minimumDistance = 16) {
+    if (bot.entity.position.distanceTo(creeper.position) >= minimumDistance) {
+        return true;
+    }
+
+    try {
+        bot.pathfinder.setMovements(new pf.Movements(bot));
+        const goal = new pf.goals.GoalInvert(new pf.goals.GoalFollow(creeper, minimumDistance));
+        await bot.pathfinder.goto(goal, true);
+    } catch (error) {
+        console.warn('Could not establish creeper firing distance:', error?.message || error);
+    }
+
+    return bot.entity.position.distanceTo(creeper.position) >= minimumDistance;
+}
+
+async function attackCreeperWithBow(bot, creeper, maxShots = 1) {
+    if (!hasBowAndArrows(bot)) {
+        log(bot, 'Creeper is nearby, but I do not have both a bow and arrows. Keeping distance.');
+        await moveAwayFromCreeper(bot, creeper);
+        return false;
+    }
+
+    bot.pvp.stop();
+    let attacked = false;
+
+    for (let shot = 0; shot < maxShots; shot++) {
+        if (bot.interrupt_code) {
+            bot.deactivateItem();
+            return false;
+        }
+
+        if (!await moveAwayFromCreeper(bot, creeper)) {
+            log(bot, 'Could not reach the minimum creeper firing distance; refusing melee engagement.');
+            return attacked;
+        }
+
+        if (!await shootBowAt(bot, creeper)) {
+            return attacked;
+        }
+        attacked = true;
+
+        if (!world.getNearbyEntities(bot, 32).includes(creeper)) {
+            break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 350));
+    }
+
+    return attacked;
+}
+
 export async function craftRecipe(bot, itemName, num=1) {
     /**
      * Attempt to craft the given item name from a recipe. May craft many items.
@@ -378,7 +452,15 @@ export async function attackEntity(bot, entity, kill=true) {
      **/
 
     let pos = entity.position;
-    await equipHighestAttack(bot)
+    if (entity.name === 'creeper') {
+        return await attackCreeperWithBow(bot, entity, kill ? 12 : 1);
+    }
+
+    await equipHighestAttack(bot);
+    const shield = bot.inventory.items().find(item => item.name.includes('shield'));
+    if (shield) {
+        await bot.equip(shield, 'off-hand');
+    }
 
     if (!kill) {
         if (bot.entity.position.distanceTo(pos) > 5) {
@@ -407,48 +489,76 @@ export async function attackEntity(bot, entity, kill=true) {
 export async function defendSelf(bot, range=9) {
     /**
      * Defend yourself from all nearby hostile mobs until there are no more.
-     * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @param {number} range, the range to look for mobs. Defaults to 8.
-     * @returns {Promise<boolean>} true if the bot found any enemies and has killed them, false if no entities were found.
-     * @example
-     * await skills.defendSelf(bot);
-     * **/
+     * Creepers are engaged with a bow from a minimum 16-block distance; the
+     * melee PvP plugin is never used against them.
+     */
     bot.modes.pause('self_defense');
     bot.modes.pause('cowardice');
     let attacked = false;
     let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
+
     while (enemy) {
-        await equipHighestAttack(bot);
-        if (bot.entity.position.distanceTo(enemy.position) >= 4 && enemy.name !== 'creeper' && enemy.name !== 'phantom') {
-            try {
-                bot.pathfinder.setMovements(new pf.Movements(bot));
-                await bot.pathfinder.goto(new pf.goals.GoalFollow(enemy, 3.5), true);
-            } catch (err) {/* might error if entity dies, ignore */}
-        }
-        if (bot.entity.position.distanceTo(enemy.position) <= 2) {
-            try {
-                bot.pathfinder.setMovements(new pf.Movements(bot));
-                let inverted_goal = new pf.goals.GoalInvert(new pf.goals.GoalFollow(enemy, 2));
-                await bot.pathfinder.goto(inverted_goal, true);
-            } catch (err) {/* might error if entity dies, ignore */}
-        }
-        bot.pvp.attack(enemy);
-        attacked = true;
-        await new Promise(resolve => setTimeout(resolve, 500));
-        enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
         if (bot.interrupt_code) {
             bot.pvp.stop();
+            bot.deactivateItem();
             return false;
         }
+
+        if (enemy.name === 'creeper') {
+            const fired = await attackCreeperWithBow(bot, enemy, 1);
+            attacked = attacked || fired;
+            if (!fired && !hasBowAndArrows(bot)) {
+                // Stay out of melee range even when the bot has no ranged weapon.
+                await moveAwayFromCreeper(bot, enemy);
+            }
+        } else {
+            await equipHighestAttack(bot);
+            const shield = bot.inventory.items().find(item => item.name.includes('shield'));
+            if (shield) {
+                await bot.equip(shield, 'off-hand');
+            }
+
+            if (bot.entity.position.distanceTo(enemy.position) >= 4 &&
+                enemy.name !== 'phantom') {
+                try {
+                    bot.pathfinder.setMovements(new pf.Movements(bot));
+                    await bot.pathfinder.goto(new pf.goals.GoalFollow(enemy, 3.5), true);
+                } catch (error) {
+                    // The target may have died or moved while navigating.
+                }
+            }
+
+            if (bot.entity.position.distanceTo(enemy.position) <= 2) {
+                try {
+                    bot.pathfinder.setMovements(new pf.Movements(bot));
+                    const retreat = new pf.goals.GoalInvert(new pf.goals.GoalFollow(enemy, 2));
+                    await bot.pathfinder.goto(retreat, true);
+                } catch (error) {
+                    // Ignore a target that disappeared during retreat.
+                }
+            }
+
+            bot.pvp.attack(enemy);
+            attacked = true;
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        if (bot.interrupt_code) {
+            bot.pvp.stop();
+            bot.deactivateItem();
+            return false;
+        }
+        enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
     }
+
     bot.pvp.stop();
+    bot.deactivateItem();
     if (attacked)
-        log(bot, `Successfully defended self.`);
+        log(bot, 'Successfully defended self.');
     else
-        log(bot, `No enemies nearby to defend self from.`);
+        log(bot, 'No enemies nearby to defend self from.');
     return attacked;
 }
-
 
 
 export async function collectBlock(bot, blockType, num=1, exclude=null) {
@@ -496,12 +606,18 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
         }
 
         let blocks = world.getNearestBlocksWhere(bot, block => {
-            if (!blocktypes.includes(block.name)) {
+            if (!block?.position || !blocktypes.includes(block.name)) {
                 return false;
             }
             if (exclude) {
-                for (let position of exclude) {
-                    if (block.position.x === position.x && block.position.y === position.y && block.position.z === position.z) {
+                for (const position of exclude) {
+                    if (position &&
+                        Number.isFinite(position.x) &&
+                        Number.isFinite(position.y) &&
+                        Number.isFinite(position.z) &&
+                        block.position.x === position.x &&
+                        block.position.y === position.y &&
+                        block.position.z === position.z) {
                         return false;
                     }
                 }
@@ -1323,23 +1439,44 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     };
     
     const progressInterval = setInterval(checkDigProgress, 1000);
-    
+    const pathTimeoutMs = 30_000;
+    let timeoutHandle = null;
+    let timedOut = false;
+
     try {
-        await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
-        clearInterval(progressInterval);
+        const timeout = new Promise((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+                timedOut = true;
+                // Stop the real path/dig as well as rejecting this wrapper. A
+                // Promise.race alone would leave the pathfinder running in the background.
+                bot.pathfinder.stop();
+                bot.stopDigging();
+                reject(new Error(`Pathfinding timeout after ${pathTimeoutMs}ms`));
+            }, pathTimeoutMs);
+        });
+
+        await Promise.race([
+            goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance)),
+            timeout
+        ]);
+
         const distance = bot.entity.position.distanceTo(new Vec3(x, y, z));
-        if (distance <= min_distance+1) {
+        if (distance <= min_distance + 1) {
             log(bot, `You have reached at ${x}, ${y}, ${z}.`);
             return true;
         }
-        else {
-            log(bot, `Unable to reach ${x}, ${y}, ${z}, you are ${Math.round(distance)} blocks away.`);
-            return false;
-        }
-    } catch (err) {
-        log(bot, `Pathfinding stopped: ${err.message}.`);
-        clearInterval(progressInterval);
+
+        log(bot, `Unable to reach ${x}, ${y}, ${z}, you are ${Math.round(distance)} blocks away.`);
         return false;
+    } catch (err) {
+        const message = timedOut
+            ? `Pathfinding timed out after ${pathTimeoutMs}ms.`
+            : `Pathfinding stopped: ${err?.message || err}.`;
+        log(bot, message);
+        return false;
+    } finally {
+        clearInterval(progressInterval);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
     }
 }
 
@@ -2154,7 +2291,7 @@ export async function goToSurface(bot) {
         if (!block || block.name === 'air' || block.name === 'cave_air') {
             continue;
         }
-        const reachedSurface = await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 0);
+        const reachedSurface = await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 2);
         if (!reachedSurface) {
             log(bot, 'Could not reach the surface.');
             return false;
