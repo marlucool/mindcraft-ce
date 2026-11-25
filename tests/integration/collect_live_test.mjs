@@ -1,4 +1,4 @@
-// Live integration test for the collectblock cancellation deadlock.
+// Live integration tests for collectblock navigation and cancellation.
 //
 // Usage:
 //   CE_TEST_RCON_PASSWORD=<password> node tests/integration/collect_live_test.mjs
@@ -14,10 +14,10 @@
 // The harness never writes to the production server (25565) and never modifies the
 // repository's tracked files.
 // Connects a real bot to the isolated Paper server on 25566 and exercises:
-//   A. normal collection of a real block (with a dropped item)
+//   A. normal collection of a real block through collectBlock.collect(block)
 //   B. interruption while navigating to a block
 //   C. interruption while digging a block
-//   D. interruption while waiting for item pickup  <-- the suspected deadlock
+//   D. cancellation after navigation reaches an item whose pickup is delayed
 //   E. ActionManager.stop() completes
 import { createBot } from 'mineflayer';
 import { pathfinder } from 'mineflayer-pathfinder';
@@ -220,90 +220,108 @@ async function main() {
         record('A: normal block collection', 'FAIL', `${err.name}: ${err.message}`);
     }
 
-    // ---- Test D: interruption while waiting for item pickup ----
-    // To reach the plugin's "wait for entityGone" state the item must NOT be
-    // picked up naturally. We teleport every nearby dropped item far away so the
-    // bot cannot reach it. The plugin then navigates as far as it can and blocks
-    // on its internal waitForPickup, which is the deadlock window under test.
+    // ---- Test D: cancel while waiting for pickup ----
+    // Set PickupDelay on the freshly dropped target so the bot can reach it but cannot
+    // pick it up. Observe the exact GoalFollow goal and exact target entityGone event;
+    // unrelated item despawns must not make this test pass.
     try {
-        const dirt = findCollectable(bot, 25);
-        if (!dirt) {
+        const block = findCollectable(bot, 25);
+        if (!block) {
             record('D: cancel while waiting for pickup', 'SKIP', 'no collectable block available');
         } else {
-            await bot.tool.equipForBlock(dirt, { requireHarvest: true, getFromChest: false, maxTools: 1 });
-            const dropped = waitForItemDrop(bot, dirt.position);
-            await bot.dig(dirt);
+            await bot.tool.equipForBlock(block, { requireHarvest: true, getFromChest: false, maxTools: 1 });
+            const dropped = waitForItemDrop(bot, block.position);
+            await bot.dig(block);
             const item = await dropped;
+
             if (!item) {
                 record('D: cancel while waiting for pickup', 'SKIP', 'no item drop observed');
             } else {
-                console.log('  item at', item.position);
+                const x = Math.floor(item.position.x);
+                const y = Math.floor(item.position.y);
+                const z = Math.floor(item.position.z);
+                const commandResult = await rcon(
+                    HOST, RCON_PORT, RCON_PASSWORD,
+                    `execute positioned ${x} ${y} ${z} as @e[type=item,distance=..2,sort=nearest,limit=1] run data merge entity @s {PickupDelay:32767}`
+                );
+                console.log('  set target pickup delay:', commandResult.trim());
 
-                // Teleport every nearby item entity well out of reach.
-                const farX = Math.floor(item.position.x) + 80;
-                const farZ = Math.floor(item.position.z) + 80;
-                const farY = Math.floor(item.position.y);
-                try {
-                    // Teleport every item entity near the bot to a far absolute location.
-                    // The selection is done with absolute coordinates so the target is
-                    // unambiguous, then tp uses absolute coordinates too.
-                    await rcon(HOST, RCON_PORT, RCON_PASSWORD,
-                        `execute positioned ${Math.floor(item.position.x)} ${farY} ${Math.floor(item.position.z)} ` +
-                        `as @e[type=item,distance=..12] run tp @s ${farX} ${farY} ${farZ}`);
-                    console.log('  teleported nearby item entities to', farX, farY, farZ);
-                } catch (e) {
-                    console.log('  could not move item:', e.message);
-                }
-                await new Promise(r => setTimeout(r, 1200));
-
-                const stillNear = Object.values(bot.entities || {}).some(
-                    e => e.name === 'item' && e.position && e.position.distanceTo(bot.entity.position) < 8);
-                console.log('  item still within 8 blocks?', stillNear);
-
-                if (stillNear) {
-                    record('D: cancel while waiting for pickup', 'SKIP',
-                        'could not move the item out of reach; pickup wait not exercised');
+                if (!commandResult.includes('Modified entity data')) {
+                    record('D: cancel while waiting for pickup', 'FAIL',
+                        `could not set PickupDelay on a dropped item: ${commandResult.trim()}`);
                 } else {
-                    let entityGoneFired = false;
-                    const onEntityGone = () => { entityGoneFired = true; };
+                    let targetNavigationReached = false;
+                    let targetEntityGone = false;
+                    let collectSettled = false;
+                    let collectError = null;
+                    const onGoalReached = goal => {
+                        if (goal?.entity === item) {
+                            targetNavigationReached = true;
+                            console.log('  exact GoalFollow target reached');
+                        }
+                    };
+                    const onEntityGone = entity => {
+                        if (entity === item) {
+                            targetEntityGone = true;
+                            console.log('  exact target item entityGone');
+                        }
+                    };
+                    bot.on('goal_reached', onGoalReached);
                     bot.on('entityGone', onEntityGone);
 
-                    const collectPromise = bot.collectBlock.collect(item);
-                    let settled = false;
-                    collectPromise.then(() => { settled = true; }, (e) => { settled = true; console.log('  collect rejected:', e.name, e.message); });
+                    const collectPromise = bot.collectBlock.collect(item).then(
+                        () => { collectSettled = true; },
+                        error => { collectSettled = true; collectError = error; },
+                    );
 
-                    // Wait for navigation to finish and the plugin to enter its pickup wait.
-                    const navDeadline = Date.now() + 10000;
-                    while (Date.now() < navDeadline && !entityGoneFired) {
-                        await new Promise(r => setTimeout(r, 50));
+                    const navigationDeadline = Date.now() + 12000;
+                    while (Date.now() < navigationDeadline &&
+                           !targetNavigationReached && !targetEntityGone && !collectSettled) {
+                        await new Promise(resolve => setTimeout(resolve, 25));
                     }
-                    await new Promise(r => setTimeout(r, 300));
+                    await new Promise(resolve => setTimeout(resolve, 250));
 
-                    if (entityGoneFired) {
-                        record('D: cancel while waiting for pickup', 'SKIP',
-                            'item was picked up naturally; the pickup wait never blocked');
+                    if (targetEntityGone || collectSettled) {
+                        record('D: cancel while waiting for pickup', 'FAIL',
+                            targetEntityGone
+                                ? 'the target item despawned despite the pickup delay'
+                                : `collection settled before the pickup wait: ${collectError?.message || 'resolved'}`);
+                    } else if (!targetNavigationReached) {
+                        record('D: cancel while waiting for pickup', 'FAIL',
+                            'pathfinder did not reach the exact item target within 12s');
+                        await Promise.race([
+                            bot.collectBlock.cancelTask().catch(() => {}),
+                            new Promise(resolve => setTimeout(resolve, 2000)),
+                        ]);
                     } else {
-                        console.log('  plugin is now blocked waiting for entityGone (the deadlock window)');
+                        console.log('  confirmed: navigation completed, target remains, collection is waiting for pickup');
                         const t0 = Date.now();
-                        const cancelPromise = bot.collectBlock.cancelTask();
                         let cancelSettled = false;
-                        cancelPromise.then(() => { cancelSettled = true; }, (e) => { cancelSettled = true; console.log('  cancelTask rejected:', e.name, e.message); });
+                        let cancelError = null;
+                        const cancelPromise = bot.collectBlock.cancelTask().then(
+                            () => { cancelSettled = true; },
+                            error => { cancelSettled = true; cancelError = error; },
+                        );
 
-                        const deadline = Date.now() + 8000;
-                        while (Date.now() < deadline && !(settled && cancelSettled)) {
-                            await new Promise(r => setTimeout(r, 50));
+                        const cancelDeadline = Date.now() + 3000;
+                        while (Date.now() < cancelDeadline && !(collectSettled && cancelSettled)) {
+                            await new Promise(resolve => setTimeout(resolve, 25));
                         }
-                        const elapsed = Date.now() - t0;
 
-                        if (settled && cancelSettled) {
+                        const elapsed = Date.now() - t0;
+                        if (collectSettled && cancelSettled && !collectError && !cancelError) {
                             record('D: cancel while waiting for pickup', 'PASS',
-                                `both settled within ${elapsed}ms while blocked on waitForPickup`);
+                                `collect and cancelTask both settled in ${elapsed}ms after navigation finished`);
                         } else {
                             record('D: cancel while waiting for pickup', 'FAIL',
-                                `DEADLOCK REPRODUCED: collect settled=${settled}, cancelTask settled=${cancelSettled} after ${elapsed}ms`);
+                                `collectSettled=${collectSettled} cancelSettled=${cancelSettled} collectError=${collectError?.name || 'none'} cancelError=${cancelError?.name || 'none'} after ${elapsed}ms`);
                         }
+                        void cancelPromise;
                     }
+
+                    bot.removeListener('goal_reached', onGoalReached);
                     bot.removeListener('entityGone', onEntityGone);
+                    void collectPromise;
                 }
             }
         }
