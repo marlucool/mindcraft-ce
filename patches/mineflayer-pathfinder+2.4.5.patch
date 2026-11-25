@@ -9,40 +9,34 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
      const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout })
      const { value: { result, astarContext: context } } = generator.next()
      astarContext = context
-@@ -160,6 +161,12 @@
+@@ -160,7 +161,12 @@
    }
  
    bot.pathfinder.stop = () => {
-+    // Nothing is running, so there is nothing to stop; the flag would otherwise survive until the
-+    // next goal and stop that one instead.
++    // An idle stop must not leave a flag that cancels the next goal.
 +    if (!stateGoal && path.length === 0) return
      stopPathing = true
-+    // During an unfinished A* search there may be no executable path for
-+    // monitorMovement to consume stopPathing. Reset immediately so goto settles.
++    // During sliced A* search, no executable path may exist for monitorMovement to consume.
++    // Reset now so goto() receives path_stop and settles.
 +    if (path.length === 0) resetPath('stopped')
    }
  
-@@ -168,9 +175,17 @@
+   bot.on('physicsTick', monitorMovement)
+@@ -168,9 +174,11 @@
    function postProcessPath (path) {
      for (let i = 0; i < path.length; i++) {
        const curPoint = path[i]
 -      if (curPoint.toBreak.length > 0 || curPoint.toPlace.length > 0) break
-+      // A useOne (open a gate/door on the way through) is a click, not a placement:
-+      // it must not stop the pass, or this node and every one after it keep their
-+      // raw corner coordinates and the executor steers into the frame
 +      if (curPoint.toBreak.length > 0 || curPoint.toPlace.some(p => !p.useOne)) break
        const b = bot.blockAt(new Vec3(curPoint.x, curPoint.y, curPoint.z))
 -      if (b && (b.type === waterType || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
-+      // An openable block is a doorway: its node is the floor centre. getPositionOnTopOf
-+      // would put it on top of the swung-open leaf (offset ~0.9 and a block up), which
-+      // the walk simulation can never reach — the bot stands in the open doorway until 'stuck'
 +      const doorway = stateMovements && stateMovements.openable && b && stateMovements.openable.has(b.type)
 +      const bamboo = b && b.name === 'bamboo'
 +      if (b && (b.type === waterType || doorway || bamboo || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
          curPoint.x = Math.floor(curPoint.x) + 0.5
          curPoint.y = Math.floor(curPoint.y)
          curPoint.z = Math.floor(curPoint.z) + 0.5
-@@ -524,6 +539,8 @@
+@@ -524,9 +532,11 @@
          bot.activateBlock(bot.blockAt(new Vec3(placingBlock.x, placingBlock.y, placingBlock.z))).then(() => {
            lockUseBlock.release()
            placingBlock = nextPoint.toPlace.shift()
@@ -51,7 +45,10 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
            console.error(err)
            lockUseBlock.release()
 +          resetPath('use_one_error')
-@@ -557,6 +574,7 @@
+         })
+         return
+       }
+@@ -557,6 +567,7 @@
                .then(function () {
                  // Dont release Sneak if the block placement was not successful
                  bot.setControlState('sneak', false)
@@ -59,16 +56,18 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -609,6 +627,9 @@
-     bot.setControlState('jump', false)
- 
+@@ -611,7 +622,10 @@
      if (bot.entity.isInWater) {
-+      bot.setControlState('jump', true)
-+      bot.setControlState('sprint', false)
-+    } else if (bot.entity.isInLava) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
-     } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
+-    } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
++    } else if (bot.entity.isInLava) {
++      bot.setControlState('jump', true)
++      bot.setControlState('sprint', false)
++    } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true))
+       bot.setControlState('jump', false)
+       bot.setControlState('sprint', true)
+     } else if (stateMovements.allowSprinting && physics.canSprintJump(path)) {
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
@@ -112,7 +111,9 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
  
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
-@@ -232,9 +238,10 @@
+@@ -230,8 +236,9 @@
+       }
+     }
      b.climbable = this.climbables.has(b.type)
 -    b.safe = (b.boundingBox === 'empty' || b.climbable || this.carpets.has(b.type)) && !this.blocksToAvoid.has(b.type)
 -    b.physical = b.boundingBox === 'block' && !this.fences.has(b.type)
@@ -122,9 +123,6 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      b.replaceable = this.replaceables.has(b.type) && !b.physical
      b.liquid = this.liquids.has(b.type)
      b.height = pos.y + dy
-     b.canFall = this.gravityBlocks.has(b.type)
-     b.openable = this.openable.has(b.type)
- 
 @@ -284,6 +291,7 @@
      cost += this.exclusionStep(block) // Is excluded so can't move or break
      cost += this.getNumEntitiesAt(block.position, 0, 0, 0) * this.entityCost
@@ -151,14 +149,13 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
        toPlace.push({ x: node.x + dir.x, y: node.y, z: node.z + dir.z, dx: 0, dy: 0, dz: 0, useOne: true }) // Indicate that a block should be used on this block not placed
      } else {
        cost += this.safeOrBreak(blockC, toBreak)
-@@ -406,6 +414,16 @@
+@@ -406,6 +414,15 @@
  
      const blockC = this.getBlock(node, dir.x, 0, dir.z) // Landing block or standing on block when jumping up by 1
      const y = blockC.physical ? 1 : 0
-+    // A diagonal jump can clip the corner of the raised block. Use the
-+    // cardinal jump instead, where the executor can approach it head-on.
++    // A diagonal jump can clip a raised-block corner; approach it cardinally.
 +    if (y === 1) return
-+    // Bamboo's narrow stalk is passable, but diagonal sweeps can clip its hitbox.
++    // Bamboo is passable, but diagonal sweeps can clip its narrow hitbox.
 +    const bambooCrossing = [
 +      [0, 0, dir.z], [0, 1, dir.z],
 +      [dir.x, 0, 0], [dir.x, 1, 0],
@@ -168,7 +165,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
  
      const block0 = this.getBlock(node, 0, -1, 0)
  
-@@ -414,6 +432,7 @@
+@@ -414,6 +431,7 @@
      const blockB1 = this.getBlock(node, 0, y + 1, dir.z)
      const blockC1 = this.getBlock(node, 0, y, dir.z)
      const blockD1 = this.getBlock(node, 0, y - 1, dir.z)
@@ -176,7 +173,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      cost1 += this.safeOrBreak(blockB1, toBreak1)
      cost1 += this.safeOrBreak(blockC1, toBreak1)
      if (blockD1.height - block0.height > 1.2) cost1 += this.safeOrBreak(blockD1, toBreak1)
-@@ -423,6 +442,7 @@
+@@ -423,6 +441,7 @@
      const blockB2 = this.getBlock(node, dir.x, y + 1, 0)
      const blockC2 = this.getBlock(node, dir.x, y, 0)
      const blockD2 = this.getBlock(node, dir.x, y - 1, 0)
@@ -184,7 +181,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      cost2 += this.safeOrBreak(blockB2, toBreak2)
      cost2 += this.safeOrBreak(blockC2, toBreak2)
      if (blockD2.height - block0.height > 1.2) cost2 += this.safeOrBreak(blockD2, toBreak2)
-@@ -658,6 +678,12 @@
+@@ -658,6 +677,12 @@
  
      return neighbors
    }
@@ -200,9 +197,15 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mineflayer-pathfinder/lib/goals.js
 --- a/node_modules/mineflayer-pathfinder/lib/goals.js
 +++ b/node_modules/mineflayer-pathfinder/lib/goals.js
-@@ -175,1 +175,1 @@
+@@ -172,7 +172,7 @@
+   }
+ 
+   isEnd (node) {
 -    if (node.distanceTo(this.pos.offset(0, this.entityHeight, 0)) > this.reach) return false
 +    if (node.offset(0, this.entityHeight, 0).distanceTo(this.pos) > this.reach) return false
+     // Check faces that could be seen from the current position. If the delta is smaller then 0.5 that means the bot cam most likely not see the face as the block is 1 block thick
+     // this could be false for blocks that have a smaller bounding box then 1x1x1
+     const dx = node.x - (this.pos.x + 0.5)
 @@ -212,8 +212,8 @@
      this.goal = new GoalLookAtBlock(new Vec3(x, y, z), bot, options)
    }
@@ -224,8 +227,8 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/minef
 -      if (results.path.length === 0) {
 -        cleanup()
 -      } else if (results.status === 'noPath') {
-+      // A search that fails or is still slicing reconstructs its best node, which is the start node
-+      // and so an empty path. Only a 'success' with nothing to walk means the goal is already met.
++      // Partial searches can reconstruct an empty path at the start node.
++      // Only explicit noPath is a failure; empty success means the goal is already met.
 +      if (results.status === 'noPath') {
          cleanup(error('NoPath', 'No path to the goal!'))
        } else if (results.status === 'timeout') {
@@ -235,14 +238,13 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/minef
        }
      }
  
-@@ -44,7 +46,10 @@
-       bot.removeListener('path_update', noPathListener)
+@@ -45,6 +47,9 @@
        bot.removeListener('goal_updated', goalChangedListener)
        bot.removeListener('path_stop', pathStopped)
-+
+ 
 +      // A failed search must not leave an active goal behind.
 +      if (err && bot.pathfinder.goal === goal) bot.pathfinder.setGoal(null)
- 
++
        // Run callback on next event stack to let pathfinder properly cleanup,
        // otherwise chaining waypoints does not work properly.
- 
+       setTimeout(() => {
