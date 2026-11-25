@@ -23,7 +23,7 @@ backports the following changes from PrismarineJS master:
   and a raised block is climbed straight on. The walker can't cut a solid corner,
   so it stood still at every turn of a tunnel one block wide.
 
-Local changes clear a rejected goal, enable wooden doors and fence gates, finish
+Local changes clear a rejected goal, enable non-iron doors and fence gates, finish
 door interaction state, release jump after placement, and allow escape from lava
 while restoring lava avoidance after leaving it. Pathfinder detects modern
 non-iron doors and fence gates by their block names rather than a stale list.

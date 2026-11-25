@@ -28,7 +28,7 @@ function worldWithVine(vineName) {
             let name = 'air';
             if (pos.x === 0 && pos.y === 61 && pos.z === 0) {
                 name = vineName;
-            } else if (pos.y < 61) {
+            } else if (pos.y < 60) {
                 name = 'stone';
             }
 
@@ -44,7 +44,7 @@ function playerAtVine() {
         entity: {
             position: new Vec3(0, 61, 0),
             velocity: new Vec3(0, 0, 0),
-            onGround: true,
+            onGround: false,
             isInWater: false,
             isInLava: false,
             isInWeb: false,
