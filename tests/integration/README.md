@@ -12,8 +12,10 @@ a pickaxe.
 - The harness only ever connects to the host/port given by `CE_TEST_HOST` /
   `CE_TEST_PORT`. The defaults point at the **isolated** test server (25566).
   It never connects to the production server (25565).
-- The harness digs blocks and teleports dropped item entities. That changes the
-  world it runs against, so it must only be pointed at a disposable test server.
+- The harness uses RCON to prepare a small stone platform, clear a short test
+  corridor, place test blocks, and set a dropped item's pickup delay. It also digs
+  those test blocks. These operations change the world, so use only a disposable
+  test server.
 - No credentials are stored in the repository. The RCON password is read from the
   environment.
 
@@ -39,8 +41,8 @@ CE_TEST_RCON_PASSWORD='<password>' node --max-old-space-size=1024 \
 
 | Test | What it exercises |
 |------|-------------------|
-| A: normal block collection | Calling `collectBlock.collect(block)` and verifying the block is mined |
-| B: cancel during A* search | `cancelTask()` after a partial search result while no executable path exists |
+| A: normal block collection | Calling `collectBlock.collect(block)` on an exposed block in controlled terrain |
+| B: cancel during A* search | `cancelTask()` after a partial search result while no executable path exists on a cleared corridor |
 | C: cancel while digging | `bot.stopDigging()` during an active dig |
 | D: cancel while waiting for pickup | `cancelTask()` after navigation has completed but before the target item despawns |
 
