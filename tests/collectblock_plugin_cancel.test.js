@@ -23,7 +23,7 @@ function createHarness() {
     bot.version = VERSION;
     bot.registry = minecraftData(VERSION);
     bot.entity = { position: new Vec3(0, 64, 0) };
-    bot.inventory = { items: () => [] };
+    bot.inventory = { items: () => [], emptySlotCount: () => 36 };
     bot.entities = {};
     bot.tool = {};
 
