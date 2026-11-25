@@ -102,19 +102,25 @@ async function makeBot(username) {
     // standing still on solid ground so the tests are deterministic.
     const groundDeadline = Date.now() + 20000;
     let stableGroundSamples = 0;
+    let previousPosition = null;
     while (Date.now() < groundDeadline) {
         await new Promise(r => setTimeout(r, 200));
+        const position = bot.entity.position;
         const velocity = bot.entity.velocity;
+        // Paper can report a small constant downward velocity while grounded.
+        // Verify actual position stability instead of requiring vertical velocity to be zero.
         const stationary = velocity &&
             Math.abs(velocity.x) < 0.01 &&
-            Math.abs(velocity.y) < 0.01 &&
-            Math.abs(velocity.z) < 0.01;
+            Math.abs(velocity.z) < 0.01 &&
+            previousPosition !== null &&
+            position.distanceTo(previousPosition) < 0.02;
         if (bot.entity.onGround && stationary) {
             stableGroundSamples++;
             if (stableGroundSamples >= 5) break;
         } else {
             stableGroundSamples = 0;
         }
+        previousPosition = position.clone();
     }
     if (stableGroundSamples < 5) {
         throw new Error('bot did not settle on solid ground within 20 seconds');
