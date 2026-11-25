@@ -1,7 +1,7 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
-@@ -61,5 +61,6 @@
+@@ -61,6 +61,7 @@
    }
 
    bot.pathfinder.getPathTo = (movements, goal, timeout) => {
@@ -9,7 +9,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
      const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout })
      const { value: { result, astarContext: context } } = generator.next()
      astarContext = context
-@@ -160,4 +161,10 @@
+@@ -160,6 +161,12 @@
    }
 
    bot.pathfinder.stop = () => {
@@ -59,7 +59,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -609,5 +627,8 @@
+@@ -609,6 +627,9 @@
      bot.setControlState('jump', false)
 
      if (bot.entity.isInWater) {
@@ -72,7 +72,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
-@@ -50,6 +50,6 @@
+@@ -50,7 +50,7 @@
      this.blocksToAvoid.add(registry.blocksByName.fire.id)
      if (registry.blocksByName.cobweb) this.blocksToAvoid.add(registry.blocksByName.cobweb.id)
      if (registry.blocksByName.web) this.blocksToAvoid.add(registry.blocksByName.web.id)
@@ -81,7 +81,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 
      this.liquids = new Set()
      this.liquids.add(registry.blocksByName.water.id)
-@@ -62,5 +62,11 @@
+@@ -62,7 +62,13 @@
 
      this.climbables = new Set()
      this.climbables.add(registry.blocksByName.ladder.id)
@@ -96,7 +96,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      this.emptyBlocks = new Set()
 
      this.replaceables = new Set()
-@@ -92,11 +98,11 @@
+@@ -92,13 +98,13 @@
        }
      })
      registry.blocksArray.forEach(block => {
@@ -112,7 +112,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
-@@ -232,8 +238,9 @@
+@@ -232,9 +238,10 @@
      b.climbable = this.climbables.has(b.type)
 -    b.safe = (b.boundingBox === 'empty' || b.climbable || this.carpets.has(b.type)) && !this.blocksToAvoid.has(b.type)
 -    b.physical = b.boundingBox === 'block' && !this.fences.has(b.type)
@@ -125,7 +125,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      b.canFall = this.gravityBlocks.has(b.type)
      b.openable = this.openable.has(b.type)
 
-@@ -284,5 +291,6 @@
+@@ -284,6 +291,7 @@
      cost += this.exclusionStep(block) // Is excluded so can't move or break
      cost += this.getNumEntitiesAt(block.position, 0, 0, 0) * this.entityCost
      if (block.safe) return cost
@@ -142,7 +142,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
        toPlace.push({ x: node.x, y: node.y - 1, z: node.z, dx: dir.x, dy: 0, dz: dir.z })
        cost += this.placeCost // additional cost for placing a block
      }
-@@ -388,6 +396,6 @@
+@@ -388,7 +396,7 @@
      if (cost > 100) return
 
      // Open fence gates
@@ -151,7 +151,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
        toPlace.push({ x: node.x + dir.x, y: node.y, z: node.z + dir.z, dx: 0, dy: 0, dz: 0, useOne: true }) // Indicate that a block should be used on this block not placed
      } else {
        cost += this.safeOrBreak(blockC, toBreak)
-@@ -406,3 +414,13 @@
+@@ -406,6 +414,16 @@
 
      const blockC = this.getBlock(node, dir.x, 0, dir.z) // Landing block or standing on block when jumping up by 1
      const y = blockC.physical ? 1 : 0
@@ -184,7 +184,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      cost2 += this.safeOrBreak(blockB2, toBreak2)
      cost2 += this.safeOrBreak(blockC2, toBreak2)
      if (blockD2.height - block0.height > 1.2) cost2 += this.safeOrBreak(blockD2, toBreak2)
-@@ -658,4 +678,10 @@
+@@ -658,6 +678,12 @@
 
      return neighbors
    }
@@ -203,7 +203,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mine
 @@ -175,1 +175,1 @@
 -    if (node.distanceTo(this.pos.offset(0, this.entityHeight, 0)) > this.reach) return false
 +    if (node.offset(0, this.entityHeight, 0).distanceTo(this.pos) > this.reach) return false
-@@ -212,6 +212,6 @@
+@@ -212,8 +212,8 @@
      this.goal = new GoalLookAtBlock(new Vec3(x, y, z), bot, options)
    }
 
@@ -217,7 +217,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mine
 diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/mineflayer-pathfinder/lib/goto.js
 --- a/node_modules/mineflayer-pathfinder/lib/goto.js
 +++ b/node_modules/mineflayer-pathfinder/lib/goto.js
-@@ -20,10 +20,12 @@
+@@ -20,12 +20,14 @@
      }
 
      function noPathListener (results) {
@@ -235,7 +235,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/minef
        }
      }
 
-@@ -44,5 +46,8 @@
+@@ -44,7 +46,10 @@
        bot.removeListener('path_update', noPathListener)
        bot.removeListener('goal_updated', goalChangedListener)
        bot.removeListener('path_stop', pathStopped)
