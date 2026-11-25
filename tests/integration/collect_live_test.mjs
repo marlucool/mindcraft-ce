@@ -184,27 +184,65 @@ async function prepareTestBlock(bot, xOffset = 5, blockName = 'stone') {
     const y = Math.floor(bot.entity.position.y);
     const z = Math.floor(bot.entity.position.z);
     const target = new Vec3(startX + xOffset, y, z);
-    const minX = Math.min(startX, target.x) - 1;
-    const maxX = Math.max(startX, target.x) + 1;
+
+    // Keep a two-block dry buffer around the target. The previous one-block
+    // clearing region allowed water outside the pad to flow back into an
+    // adjacent cell before collectblock performed its safeToBreak check.
+    const minX = Math.min(startX, target.x) - 2;
+    const maxX = Math.max(startX, target.x) + 2;
+    const minZ = z - 2;
+    const maxZ = z + 2;
 
     const commands = [
-        `fill ${minX} ${y - 1} ${z - 1} ${maxX} ${y - 1} ${z + 1} stone`,
-        `fill ${minX} ${y} ${z - 1} ${maxX} ${y + 2} ${z + 1} air`,
+        `fill ${minX} ${y - 1} ${minZ} ${maxX} ${y - 1} ${maxZ} stone`,
+        `fill ${minX} ${y} ${minZ} ${maxX} ${y + 2} ${maxZ} air`,
         `setblock ${target.x} ${target.y} ${target.z} ${blockName} replace`,
     ];
     for (const command of commands) {
         const result = await rcon(HOST, RCON_PORT, RCON_PASSWORD, command);
+        console.log(`  [test setup] ${command} => ${result.trim()}`);
         if (/Unknown command|Syntax error|Failed to execute/i.test(result)) {
             throw new Error(`test-world setup failed for "${command}": ${result.trim()}`);
         }
     }
 
-    for (let attempt = 0; attempt < 40; attempt++) {
-        const block = bot.blockAt(target);
-        if (block && block.name === blockName) return block;
+    const movements = bot.collectBlock.movements;
+    const safetyOffsets = [
+        { label: 'above', dx: 0, dy: 1, dz: 0 },
+        { label: 'west', dx: -1, dy: 0, dz: 0 },
+        { label: 'east', dx: 1, dy: 0, dz: 0 },
+        { label: 'north', dx: 0, dy: 0, dz: -1 },
+        { label: 'south', dx: 0, dy: 0, dz: 1 },
+    ];
+    const inspectSafety = () => safetyOffsets.map(offset => {
+        const block = movements?.getBlock(target, offset.dx, offset.dy, offset.dz);
+        return {
+            label: offset.label,
+            name: block?.name ?? 'unloaded',
+            type: block?.type ?? null,
+            liquid: block?.liquid ?? false,
+            waterlogged: block?.isWaterlogged ?? false,
+        };
+    });
+
+    let consecutiveDrySamples = 0;
+    let lastBlock = null;
+    let lastSafety = [];
+    for (let attempt = 0; attempt < 80; attempt++) {
+        lastBlock = bot.blockAt(target);
+        lastSafety = inspectSafety();
+        const targetReady = lastBlock && lastBlock.name === blockName;
+        const surroundingsReady = lastSafety.every(block => block.name !== 'unloaded' && !block.liquid);
+        if (targetReady && surroundingsReady) {
+            consecutiveDrySamples++;
+            if (consecutiveDrySamples >= 3) return lastBlock;
+        } else {
+            consecutiveDrySamples = 0;
+        }
         await new Promise(resolve => setTimeout(resolve, 50));
     }
-    throw new Error(`test block ${blockName} did not appear at ${target}`);
+
+    throw new Error(`test block ${blockName} or dry surroundings did not stabilize at ${target}; block=${lastBlock?.name ?? 'unloaded'}; surroundings=${JSON.stringify(lastSafety)}`);
 }
 
 // Wait for a dropped item entity to appear near a position
@@ -268,25 +306,36 @@ async function main() {
                 const movements = bot.collectBlock.movements;
                 const worldTargetBefore = bot.blockAt(target.position);
                 const safetyContext = () => {
+                    const activeMovements = bot.pathfinder.movements ?? movements;
                     const current = bot.blockAt(target.position);
-                    const above = movements?.getBlock(target.position, 0, 1, 0);
-                    const sides = [
-                        movements?.getBlock(target.position, -1, 0, 0),
-                        movements?.getBlock(target.position, 1, 0, 0),
-                        movements?.getBlock(target.position, 0, 0, -1),
-                        movements?.getBlock(target.position, 0, 0, 1),
+                    const offsets = [
+                        { label: 'above', dx: 0, dy: 1, dz: 0 },
+                        { label: 'west', dx: -1, dy: 0, dz: 0 },
+                        { label: 'east', dx: 1, dy: 0, dz: 0 },
+                        { label: 'north', dx: 0, dy: 0, dz: -1 },
+                        { label: 'south', dx: 0, dy: 0, dz: 1 },
                     ];
+                    const surroundings = offsets.map(offset => {
+                        const block = activeMovements?.getBlock(target.position, offset.dx, offset.dy, offset.dz);
+                        return {
+                            label: offset.label,
+                            name: block?.name ?? 'unloaded',
+                            type: block?.type ?? null,
+                            liquid: block?.liquid ?? false,
+                            waterlogged: block?.isWaterlogged ?? false,
+                            position: target.position.offset(offset.dx, offset.dy, offset.dz).toString(),
+                        };
+                    });
                     return {
                         worldBlock: current ? `${current.name}:${current.type}` : 'unloaded',
                         targetType: target.type,
-                        safeToBreak: movements?.safeToBreak(target),
-                        canDig: movements?.canDig,
-                        dontCreateFlow: movements?.dontCreateFlow,
-                        dontMineUnderFallingBlock: movements?.dontMineUnderFallingBlock,
-                        inBlocksCantBreak: movements?.blocksCantBreak?.has(target.type),
-                        aboveIsLiquid: above?.liquid,
-                        aboveCanFall: above?.canFall,
-                        adjacentLiquid: sides.some(block => block?.liquid),
+                        safeToBreak: activeMovements?.safeToBreak(target),
+                        canDig: activeMovements?.canDig,
+                        dontCreateFlow: activeMovements?.dontCreateFlow,
+                        dontMineUnderFallingBlock: activeMovements?.dontMineUnderFallingBlock,
+                        inBlocksCantBreak: activeMovements?.blocksCantBreak?.has(target.type),
+                        movementConfigIsPathfinderConfig: activeMovements === bot.pathfinder.movements,
+                        surroundings,
                     };
                 };
                 console.log('  Test A target diagnostics:', JSON.stringify({
