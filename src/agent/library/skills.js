@@ -389,10 +389,11 @@ export async function attackEntity(bot, entity, kill=true) {
     if (!kill) {
         if (bot.entity.position.distanceTo(pos) > 5) {
             console.log('moving to mob...')
-            await goToPosition(bot, pos.x, pos.y, pos.z);
+            if (!await goToPosition(bot, pos.x, pos.y, pos.z)) return false;
         }
-        console.log('attacking mob...')
+        console.log('attacking mob...');
         await bot.attack(entity);
+        return true;
     }
     else {
         bot.pvp.attack(entity);
@@ -593,8 +594,12 @@ export async function pickupNearbyItems(bot, allowDig=false) {
         unregister();
         if (!actionContext(bot)?.signal.aborted) restore();
     }
-    log(bot, `Picked up ${pickedUp} item entities.`);
-    return true;
+    if (pickedUp > 0 && !bot.interrupt_code) {
+        log(bot, `Picked up ${pickedUp} item entities.`);
+        return true;
+    }
+    log(bot, bot.interrupt_code ? 'Item collection was interrupted.' : 'No items were picked up.');
+    return false;
 }
 
 
@@ -951,7 +956,10 @@ export async function putInChest(bot, itemName, num=-1) {
         return false;
     }
     let to_put = num === -1 ? item.count : Math.min(num, item.count);
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Could not reach the chest.');
+        return false;
+    }
     const chestContainer = await bot.openContainer(chest);
     await chestContainer.deposit(item.type, null, to_put);
     await chestContainer.close();
@@ -975,7 +983,10 @@ export async function takeFromChest(bot, itemName, num=-1) {
         log(bot, `Could not find a chest nearby.`);
         return false;
     }
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Could not reach the chest.');
+        return false;
+    }
     const chestContainer = await bot.openContainer(chest);
     
     // Find all matching items in the chest
@@ -1020,7 +1031,10 @@ export async function viewChest(bot) {
         log(bot, `Could not find a chest nearby.`);
         return false;
     }
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Could not reach the chest.');
+        return false;
+    }
     const chestContainer = await bot.openContainer(chest);
     let items = chestContainer.containerItems();
     if (items.length === 0) {
@@ -1065,74 +1079,73 @@ export async function consume(bot, itemName="") {
 export async function giveToPlayer(bot, itemType, username, num=1) {
     assertActionOwner(bot);
     /**
-     * Give one of the specified item to the specified player
-     * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @param {string} itemType, the name of the item to give.
-     * @param {string} username, the username of the player to give the item to.
-     * @param {number} num, the number of items to give. Defaults to 1.
-     * @returns {Promise<boolean>} true if the item was given, false otherwise.
-     * @example
-     * await skills.giveToPlayer(bot, "oak_log", "player1");
+     * Give one of the specified items to the specified player.
+     * @param {MinecraftBot} bot
+     * @param {string} itemType
+     * @param {string} username
+     * @param {number} num
+     * @returns {Promise<boolean>} true only when the recipient collects the item.
      **/
     if (bot.username === username) {
-        log(bot, `You cannot give items to yourself.`);
+        log(bot, 'You cannot give items to yourself.');
         return false;
     }
-    let player = bot.players[username]?.entity
+    const player = bot.players[username]?.entity;
     if (!player) {
         log(bot, `Could not find ${username}.`);
         return false;
     }
-    await goToPlayer(bot, username, 3);
-    // if we are 2 below the player
+    if (!await goToPlayer(bot, username, 3)) return false;
+
     if (bot.entity.position.y < player.position.y - 1) {
-        await goToPlayer(bot, username, 1);
+        if (!await goToPlayer(bot, username, 1)) return false;
     }
-    // if we are too close, make some distance
+
     if (bot.entity.position.distanceTo(player.position) < 2) {
-        let too_close = true;
-        let start_moving_away = Date.now();
+        let tooClose = true;
+        const started = Date.now();
         await moveAwayFromEntity(bot, player, 2);
-        while (too_close && !bot.interrupt_code) {
+        while (tooClose && !bot.interrupt_code) {
             await new Promise(resolve => setTimeout(resolve, 500));
-            too_close = bot.entity.position.distanceTo(player.position) < 5;
-            if (too_close) {
-                await moveAwayFromEntity(bot, player, 5);
-            }
-            if (Date.now() - start_moving_away > 3000) {
-                break;
-            }
+            tooClose = bot.entity.position.distanceTo(player.position) < 5;
+            if (tooClose) await moveAwayFromEntity(bot, player, 5);
+            if (Date.now() - started > 3000) break;
         }
-        if (too_close) {
+        if (tooClose) {
             log(bot, `Failed to give ${itemType} to ${username}, too close.`);
             return false;
         }
     }
 
     await bot.lookAt(player.position);
-    if (await discard(bot, itemType, num)) {
-        let given = false;
-        bot.once('playerCollect', (collector, collected) => {
-            console.log(collected.name);
-            if (collector.username === username) {
-                log(bot, `${username} received ${itemType}.`);
-                given = true;
-            }
-        });
-        let start = Date.now();
-        while (!given && !bot.interrupt_code) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            if (given) {
-                return true;
-            }
-            if (Date.now() - start > 3000) {
-                break;
-            }
+    let given = false;
+    const onPlayerCollect = (collector, collected) => {
+        const droppedItem = collected?.getDroppedItem?.();
+        if (collector?.username === username && droppedItem?.name === itemType) {
+            log(bot, `${username} received ${itemType}.`);
+            given = true;
         }
+    };
+
+    // Subscribe before tossing: the recipient may collect the drop immediately.
+    bot.on('playerCollect', onPlayerCollect);
+    try {
+        if (!await discard(bot, itemType, num)) return false;
+        if (given) return true;
+
+        const started = Date.now();
+        while (!given && !bot.interrupt_code && Date.now() - started <= 3000) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (given) return true;
+    } finally {
+        bot.removeListener('playerCollect', onPlayerCollect);
     }
+
     log(bot, `Failed to give ${itemType} to ${username}, it was never received.`);
     return false;
 }
+
 
 // Searches for a path to the goal for up to timeoutMs, and returns the pathfinder's last result.
 //
@@ -1399,7 +1412,7 @@ export async function goToPlayer(bot, username, distance=3) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} username, the username of the player to navigate to.
      * @param {number} distance, the goal distance to the player.
-     * @returns {Promise<boolean>} true if the player was found, false otherwise.
+     * @returns {Promise<boolean>} true if the player was reached, false otherwise.
      * @example
      * await skills.goToPlayer(bot, "player");
      **/
@@ -1415,18 +1428,25 @@ export async function goToPlayer(bot, username, distance=3) {
 
     bot.modes.pause('self_defense');
     bot.modes.pause('cowardice');
-    let player = bot.players[username]?.entity
+    const player = bot.players[username]?.entity;
     if (!player) {
         log(bot, `Could not find ${username}.`);
         return false;
     }
 
-    distance = Math.max(distance, 0.5);
-    const goal = new pf.goals.GoalFollow(player, distance);
-
-    await goToGoal(bot, goal, true);
-
-    log(bot, `You have reached ${username}.`);
+    const goal = new pf.goals.GoalFollow(player, Math.max(distance, 0.5));
+    try {
+        const reached = await goToGoal(bot, goal);
+        if (!reached || bot.interrupt_code) {
+            log(bot, `Could not reach ${username}.`);
+            return false;
+        }
+        log(bot, `You have reached ${username}.`);
+        return true;
+    } catch (error) {
+        log(bot, `Could not reach ${username}: ${error.message}.`);
+        return false;
+    }
 }
 
 
@@ -2164,7 +2184,11 @@ export async function goToSurface(bot) {
         if (!block || block.name === 'air' || block.name === 'cave_air') {
             continue;
         }
-        await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 0); // this will probably work most of the time but a custom mining and towering up implementation could be added if needed
+        const reached = await goToPosition(bot, block.position.x, block.position.y + 1, block.position.z, 0);
+        if (!reached) {
+            log(bot, 'Could not reach the surface.');
+            return false;
+        }
         log(bot, `Going to the surface at y=${y+1}.`);
         return true;
     }
