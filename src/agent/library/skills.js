@@ -585,10 +585,14 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
 
                         // Never start a second collection while the timed-out task is
                         // still active. The rejection is expected after cancellation.
+                        let settlementTimer;
                         const settled = await Promise.race([
                             collectPromise.then(() => true, () => true),
-                            new Promise(resolve => setTimeout(() => resolve(false), 2000)),
+                            new Promise(resolve => {
+                                settlementTimer = setTimeout(() => resolve(false), 2000);
+                            }),
                         ]);
+                        clearTimeout(settlementTimer);
                         if (!settled) {
                             log(bot, `Could not confirm cancellation of the timed-out ${blockType} collection; stopping this skill to avoid overlapping tasks.`);
                             return false;
