@@ -154,7 +154,8 @@ export function getNearestBlocksWhere(bot, predicate, distance=8, count=10000) {
      * let waterBlocks = world.getNearestBlocksWhere(bot, block => block.name === 'water', 16, 10);
      **/
     let positions = bot.findBlocks({matching: predicate, maxDistance: distance, count: count});
-    let blocks = positions.map(position => bot.blockAt(position));
+    // Chunks can unload between findBlocks and blockAt; do not return null entries.
+    let blocks = positions.map(position => bot.blockAt(position)).filter(block => block !== null);
     return blocks;
 }
 
