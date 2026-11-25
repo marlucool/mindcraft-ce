@@ -297,21 +297,46 @@ async function prepareTestBlock(bot, xOffset = 5, blockName = 'stone') {
     throw new Error(`test block ${blockName} or dry surroundings did not stabilize at ${target}; block=${lastBlock?.name ?? 'unloaded'}; surroundings=${JSON.stringify(lastSafety)}`);
 }
 
-// Wait for a dropped item entity to appear near a position
-function waitForItemDrop(bot, near, timeoutMs = 10000) {
-    return new Promise((resolve) => {
-        const onDrop = (item) => {
-            if (item.position.distanceTo(near) <= 4) {
-                clearTimeout(timer);
-                bot.removeListener('itemDrop', onDrop);
-                resolve(item);
+// Find a loaded item entity near the expected test position.
+function findItemEntity(bot, near) {
+    return Object.values(bot.entities ?? {}).find(entity =>
+        entity?.name === 'item' &&
+        entity.position &&
+        entity.position.distanceTo(near) <= 4
+    ) ?? null;
+}
+
+// Wait for an item entity using both spawn events and entity-map polling.
+// The polling fallback avoids coupling this cancellation test to itemDrop event timing.
+function waitForItemEntity(bot, near, timeoutMs = 10000) {
+    return new Promise(resolve => {
+        let settled = false;
+        let pollHandle;
+        let timeoutHandle;
+
+        const finish = entity => {
+            if (settled) return;
+            settled = true;
+            clearInterval(pollHandle);
+            clearTimeout(timeoutHandle);
+            bot.removeListener('entitySpawn', onEntitySpawn);
+            bot.removeListener('itemDrop', onItemDrop);
+            resolve(entity ?? null);
+        };
+        const inspect = entity => {
+            if (entity?.name === 'item' && entity.position &&
+                entity.position.distanceTo(near) <= 4) {
+                finish(entity);
             }
         };
-        const timer = setTimeout(() => {
-            bot.removeListener('itemDrop', onDrop);
-            resolve(null);
-        }, timeoutMs);
-        bot.on('itemDrop', onDrop);
+        const onEntitySpawn = entity => inspect(entity);
+        const onItemDrop = entity => inspect(entity);
+
+        bot.on('entitySpawn', onEntitySpawn);
+        bot.on('itemDrop', onItemDrop);
+        pollHandle = setInterval(() => inspect(findItemEntity(bot, near)), 50);
+        timeoutHandle = setTimeout(() => finish(null), timeoutMs);
+        inspect(findItemEntity(bot, near));
     });
 }
 
@@ -467,130 +492,137 @@ async function main() {
     }
 
     // ---- Test D: cancel while waiting for pickup ----
-    // Set PickupDelay on the freshly dropped target so the bot can reach it but cannot
-    // pick it up. Observe the exact GoalFollow goal and exact target entityGone event;
-    // unrelated item despawns must not make this test pass.
+    // Use a controlled item entity with PickupDelay set at creation. Test A already
+    // verifies the block-drop path; D should isolate the pending-pickup cancellation
+    // state rather than depend on a separate dig/drop event being observed.
     try {
         const block = await prepareTestBlock(bot, 5, 'dirt');
         if (!block) {
-            record('D: cancel while waiting for pickup', 'SKIP', 'controlled target block was not created');
+            record('D: cancel while waiting for pickup', 'SKIP', 'controlled target position was not prepared');
         } else {
-            await bot.tool.equipForBlock(block, { requireHarvest: true, getFromChest: false, maxTools: 1 });
-            const dropped = waitForItemDrop(bot, block.position);
-            await bot.dig(block);
-            const item = await dropped;
-
-            if (!item) {
-                record('D: cancel while waiting for pickup', 'SKIP', 'no item drop observed');
-            } else {
-                const x = Math.floor(item.position.x);
-                const y = Math.floor(item.position.y);
-                const z = Math.floor(item.position.z);
-                const commandResult = await rcon(
-                    HOST, RCON_PORT, RCON_PASSWORD,
-                    `execute positioned ${x} ${y} ${z} as @e[type=item,distance=..2,sort=nearest,limit=1] run data merge entity @s {PickupDelay:32767}`
-                );
-                console.log('  set target pickup delay:', commandResult.trim());
-
-                if (!commandResult.includes('Modified entity data')) {
-                    record('D: cancel while waiting for pickup', 'FAIL',
-                        `could not set PickupDelay on a dropped item: ${commandResult.trim()}`);
-                } else {
-                    let targetNavigationReached = false;
-                    let targetEntityGone = false;
-                    let collectSettled = false;
-                    let collectError = null;
-                    const onGoalReached = goal => {
-                        if (goal?.entity === item) {
-                            targetNavigationReached = true;
-                            console.log('  exact GoalFollow target reached');
-                        }
-                    };
-                    const onEntityGone = entity => {
-                        if (entity === item) {
-                            targetEntityGone = true;
-                            console.log('  exact target item entityGone');
-                        }
-                    };
-                    bot.on('goal_reached', onGoalReached);
-                    bot.on('entityGone', onEntityGone);
-
-                    const collectPromise = bot.collectBlock.collect(item).then(
-                        () => { collectSettled = true; },
-                        error => { collectSettled = true; collectError = error; },
-                    );
-
-                    const navigationDeadline = Date.now() + 12000;
-                    while (Date.now() < navigationDeadline &&
-                           !targetNavigationReached && !targetEntityGone && !collectSettled) {
-                        await new Promise(resolve => setTimeout(resolve, 25));
-                    }
-                    await new Promise(resolve => setTimeout(resolve, 250));
-
-                    if (targetEntityGone || collectSettled) {
-                        record('D: cancel while waiting for pickup', 'FAIL',
-                            targetEntityGone
-                                ? 'the target item despawned despite the pickup delay'
-                                : `collection settled before the pickup wait: ${collectError?.message || 'resolved'}`);
-                    } else if (!targetNavigationReached) {
-                        record('D: cancel while waiting for pickup', 'FAIL',
-                            'pathfinder did not reach the exact item target within 12s');
-                        await Promise.race([
-                            bot.collectBlock.cancelTask().catch(() => {}),
-                            new Promise(resolve => setTimeout(resolve, 2000)),
-                        ]);
-                    } else {
-                        console.log('  confirmed: navigation completed, target remains, collection is waiting for pickup');
-                        const t0 = Date.now();
-                        let cancelSettled = false;
-                        let cancelError = null;
-                        const cancelPromise = bot.collectBlock.cancelTask().then(
-                            () => { cancelSettled = true; },
-                            error => { cancelSettled = true; cancelError = error; },
-                        );
-
-                        const cancelDeadline = Date.now() + 3000;
-                        while (Date.now() < cancelDeadline && !(collectSettled && cancelSettled)) {
-                            await new Promise(resolve => setTimeout(resolve, 25));
-                        }
-
-                        const elapsed = Date.now() - t0;
-                        if (collectSettled && cancelSettled && !collectError && !cancelError) {
-                            record('D: cancel while waiting for pickup', 'PASS',
-                                `collect and cancelTask both settled in ${elapsed}ms after navigation finished`);
-                        } else {
-                            record('D: cancel while waiting for pickup', 'FAIL',
-                                `collectSettled=${collectSettled} cancelSettled=${cancelSettled} collectError=${collectError?.name || 'none'} cancelError=${cancelError?.name || 'none'} after ${elapsed}ms`);
-                        }
-                        void cancelPromise;
-                    }
-
-                    // If cancellation failed, remove the exact test item so the plugin
-                    // can finish and later scenarios do not overlap an abandoned task.
-                    if (!collectSettled) {
-                        try {
-                            const itemX = Math.floor(item.position.x);
-                            const itemY = Math.floor(item.position.y);
-                            const itemZ = Math.floor(item.position.z);
-                            const cleanupResult = await rcon(
-                                HOST, RCON_PORT, RCON_PASSWORD,
-                                `execute positioned ${itemX} ${itemY} ${itemZ} as @e[type=item,distance=..2,sort=nearest,limit=1] run kill @s`
-                            );
-                            console.log('  pickup-wait cleanup:', cleanupResult.trim());
-                            const cleanupDeadline = Date.now() + 2000;
-                            while (Date.now() < cleanupDeadline && !collectSettled) {
-                                await new Promise(resolve => setTimeout(resolve, 25));
-                            }
-                        } catch (cleanupError) {
-                            console.log('  pickup-wait cleanup failed:', cleanupError.message);
-                        }
-                    }
-
-                    bot.removeListener('goal_reached', onGoalReached);
-                    bot.removeListener('entityGone', onEntityGone);
-                    void collectPromise;
-                }
+            const itemTag = 'ce_collectblock_wait_test';
+            const p = block.position;
+            const clearResult = await rcon(
+                HOST, RCON_PORT, RCON_PASSWORD,
+                `setblock ${p.x} ${p.y} ${p.z} air replace`
+            );
+            console.log('  cleared item spawn cell:', clearResult.trim());
+            if (/Unknown command|Syntax error|Failed to execute/i.test(clearResult)) {
+                throw new Error(`could not clear controlled item spawn cell: ${clearResult.trim()}`);
             }
+
+            await rcon(
+                HOST, RCON_PORT, RCON_PASSWORD,
+                `kill @e[type=item,tag=${itemTag}]`
+            );
+            const spawn = new Vec3(p.x + 0.5, p.y + 0.25, p.z + 0.5);
+            const summonResult = await rcon(
+                HOST, RCON_PORT, RCON_PASSWORD,
+                `summon minecraft:item ${spawn.x} ${spawn.y} ${spawn.z} {Tags:["${itemTag}"],Item:{id:"minecraft:dirt",count:1},PickupDelay:32767,Age:-32768}`
+            );
+            console.log('  summoned delayed pickup target:', summonResult.trim());
+            if (/Unknown command|Syntax error|Failed to execute|Unable to summon/i.test(summonResult)) {
+                throw new Error(`could not summon controlled pickup target: ${summonResult.trim()}`);
+            }
+
+            const item = await waitForItemEntity(bot, spawn, 10000);
+            if (!item) {
+                await rcon(HOST, RCON_PORT, RCON_PASSWORD,
+                    `kill @e[type=item,tag=${itemTag}]`);
+                throw new Error('the controlled item entity was not observed by Mineflayer');
+            }
+
+            const pickupDelay = await rcon(
+                HOST, RCON_PORT, RCON_PASSWORD,
+                `execute as @e[type=item,tag=${itemTag},limit=1] run data get entity @s PickupDelay`
+            );
+            console.log('  verified target PickupDelay:', pickupDelay.trim());
+            if (!pickupDelay.includes('32767')) {
+                await rcon(HOST, RCON_PORT, RCON_PASSWORD,
+                    `kill @e[type=item,tag=${itemTag}]`);
+                throw new Error(`expected PickupDelay 32767, got: ${pickupDelay.trim()}`);
+            }
+
+            let targetNavigationReached = false;
+            let targetEntityGone = false;
+            let collectSettled = false;
+            let collectError = null;
+            const onGoalReached = goal => {
+                if (goal?.entity === item) {
+                    targetNavigationReached = true;
+                    console.log('  exact GoalFollow target reached');
+                }
+            };
+            const onEntityGone = entity => {
+                if (entity === item) {
+                    targetEntityGone = true;
+                    console.log('  exact target item entityGone');
+                }
+            };
+            bot.on('goal_reached', onGoalReached);
+            bot.on('entityGone', onEntityGone);
+
+            const collectPromise = bot.collectBlock.collect(item).then(
+                () => { collectSettled = true; },
+                error => { collectSettled = true; collectError = error; },
+            );
+
+            const navigationDeadline = Date.now() + 12000;
+            while (Date.now() < navigationDeadline &&
+                   !targetNavigationReached && !targetEntityGone && !collectSettled) {
+                await new Promise(resolve => setTimeout(resolve, 25));
+            }
+            await new Promise(resolve => setTimeout(resolve, 250));
+
+            if (targetEntityGone || collectSettled) {
+                record('D: cancel while waiting for pickup', 'FAIL',
+                    targetEntityGone
+                        ? 'the controlled target item despawned despite PickupDelay=32767'
+                        : `collection settled before the pickup wait: ${collectError?.message || 'resolved'}`);
+            } else if (!targetNavigationReached) {
+                record('D: cancel while waiting for pickup', 'FAIL',
+                    'pathfinder did not reach the exact item target within 12s');
+                await Promise.race([
+                    bot.collectBlock.cancelTask().catch(() => {}),
+                    new Promise(resolve => setTimeout(resolve, 2000)),
+                ]);
+            } else {
+                console.log('  confirmed: navigation completed, exact target remains, collection is waiting for pickup');
+                const t0 = Date.now();
+                let cancelSettled = false;
+                let cancelError = null;
+                const cancelPromise = bot.collectBlock.cancelTask().then(
+                    () => { cancelSettled = true; },
+                    error => { cancelSettled = true; cancelError = error; },
+                );
+
+                const cancelDeadline = Date.now() + 3000;
+                while (Date.now() < cancelDeadline && !(collectSettled && cancelSettled)) {
+                    await new Promise(resolve => setTimeout(resolve, 25));
+                }
+
+                const elapsed = Date.now() - t0;
+                if (collectSettled && cancelSettled && !collectError && !cancelError) {
+                    record('D: cancel while waiting for pickup', 'PASS',
+                        `collect and cancelTask both settled in ${elapsed}ms after navigation finished`);
+                } else {
+                    record('D: cancel while waiting for pickup', 'FAIL',
+                        `collectSettled=${collectSettled} cancelSettled=${cancelSettled} collectError=${collectError?.name || 'none'} cancelError=${cancelError?.name || 'none'} after ${elapsed}ms`);
+                }
+                void cancelPromise;
+            }
+
+            if (!collectSettled) {
+                await Promise.race([
+                    bot.collectBlock.cancelTask().catch(() => {}),
+                    new Promise(resolve => setTimeout(resolve, 2000)),
+                ]);
+            }
+            bot.removeListener('goal_reached', onGoalReached);
+            bot.removeListener('entityGone', onEntityGone);
+            await rcon(HOST, RCON_PORT, RCON_PASSWORD,
+                `kill @e[type=item,tag=${itemTag}]`);
+            void collectPromise;
         }
     } catch (err) {
         record('D: cancel while waiting for pickup', 'FAIL', `${err.name}: ${err.message}`);
