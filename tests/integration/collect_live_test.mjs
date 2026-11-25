@@ -116,23 +116,66 @@ async function makeBot(username) {
     // Let the surrounding chunks arrive before searching for blocks.
     await new Promise(r => setTimeout(r, 3000));
 
-    // The bot spawns at a random point and may be falling. Wait until it is
-    // standing still on solid ground so the tests are deterministic.
-    const groundDeadline = Date.now() + 20000;
+    // Paper/Mineflayer can occasionally leave the entity onGround flag false
+    // even when the bot is stationary with its feet exactly on a loaded solid
+    // collision surface. Confirm the actual support block and collision top
+    // instead of treating that packet flag as the only source of truth.
+    const findSolidSupport = () => {
+        const feet = bot.entity.position;
+        const sampleY = Math.floor(feet.y - 0.001);
+        const samples = [[0, 0], [0.25, 0], [-0.25, 0], [0, 0.25], [0, -0.25]];
+
+        for (const [dx, dz] of samples) {
+            const x = Math.floor(feet.x + dx);
+            const z = Math.floor(feet.z + dz);
+            const block = bot.blockAt(new Vec3(x, sampleY, z));
+            if (!block || block.boundingBox !== 'block') continue;
+
+            const topYs = Array.isArray(block.shapes) && block.shapes.length > 0
+                ? block.shapes.map(shape => block.position.y + shape[4])
+                : [block.position.y + 1];
+            const topY = topYs.find(y => Math.abs(feet.y - y) <= 0.08);
+            if (topY !== undefined) return { block, topY, gap: feet.y - topY };
+        }
+        return null;
+    };
+
+    // The bot may spawn while chunks are loading or while it is falling.
+    // Require five consecutive stable samples plus either the server ground
+    // flag or verified contact with a solid collision surface. If onGround is
+    // false, vertical velocity must also be effectively zero.
+    const groundDeadline = Date.now() + 30000;
     let stableGroundSamples = 0;
     let previousPosition = null;
+    let latestGroundDiagnostics = null;
     while (Date.now() < groundDeadline) {
         await new Promise(r => setTimeout(r, 200));
         const position = bot.entity.position;
         const velocity = bot.entity.velocity;
-        // Paper can report a small constant downward velocity while grounded.
-        // Verify actual position stability instead of requiring vertical velocity to be zero.
+        const support = findSolidSupport();
+        const onGround = Boolean(bot.entity.onGround);
+        const grounded = onGround || support !== null;
         const stationary = velocity &&
             Math.abs(velocity.x) < 0.01 &&
             Math.abs(velocity.z) < 0.01 &&
+            (onGround || Math.abs(velocity.y) < 0.01) &&
             previousPosition !== null &&
             position.distanceTo(previousPosition) < 0.02;
-        if (bot.entity.onGround && stationary) {
+
+        latestGroundDiagnostics = {
+            position: position.toString(),
+            velocity: velocity ? { x: velocity.x, y: velocity.y, z: velocity.z } : null,
+            onGround,
+            support: support ? {
+                name: support.block.name,
+                type: support.block.type,
+                position: support.block.position.toString(),
+                topY: support.topY,
+                feetToTopGap: support.gap,
+            } : null,
+        };
+
+        if (grounded && stationary) {
             stableGroundSamples++;
             if (stableGroundSamples >= 5) break;
         } else {
@@ -141,9 +184,11 @@ async function makeBot(username) {
         previousPosition = position.clone();
     }
     if (stableGroundSamples < 5) {
-        throw new Error('bot did not settle on solid ground within 20 seconds');
+        throw new Error(
+            `bot did not settle on verified solid ground within 30 seconds; diagnostics=${JSON.stringify(latestGroundDiagnostics)}`
+        );
     }
-    console.log('  settled on ground at', bot.entity.position);
+    console.log('  settled on verified ground:', JSON.stringify(latestGroundDiagnostics));
 
     let pathUpdateCount = 0;
     const originalGoto = bot.pathfinder.goto.bind(bot.pathfinder);
