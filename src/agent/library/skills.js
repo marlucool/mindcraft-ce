@@ -38,6 +38,10 @@ function hasBowAndArrows(bot) {
         bot.inventory.items().some(item => item.name.includes('arrow'));
 }
 
+function isEntityStillTracked(bot, entity) {
+    return Boolean(bot.entities && bot.entities[entity.id] === entity);
+}
+
 // mineflayer-pvp performs melee attacks only. Shoot a fully drawn bow directly
 // rather than equipping a bow and accidentally asking the melee plugin to attack.
 async function shootBowAt(bot, entity) {
@@ -98,13 +102,16 @@ async function attackCreeperWithBow(bot, creeper, maxShots = 1, requireKill = fa
         }
         attacked = true;
 
-        if (!world.getNearbyEntities(bot, 32).includes(creeper)) {
+        // Nearby-entity queries are distance-filtered; a living creeper can
+        // move beyond 32 blocks. Use Mineflayer's entity registry to confirm
+        // removal rather than mistaking distance for a kill.
+        if (!isEntityStillTracked(bot, creeper)) {
             return true;
         }
         await new Promise(resolve => setTimeout(resolve, 350));
     }
 
-    if (requireKill && attacked) {
+    if (requireKill && attacked && isEntityStillTracked(bot, creeper)) {
         log(bot, 'Creeper is still present after the ranged attack limit; not reporting a confirmed kill.');
         return false;
     }
@@ -499,6 +506,8 @@ export async function defendSelf(bot, range=9) {
     bot.modes.pause('self_defense');
     bot.modes.pause('cowardice');
     let attacked = false;
+    let unableToEngage = false;
+    const skippedEnemies = new Set();
     let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
 
     while (enemy) {
@@ -509,9 +518,21 @@ export async function defendSelf(bot, range=9) {
         }
 
         if (enemy.name === 'creeper') {
-            const fired = await attackCreeperWithBow(bot, enemy, 1);
+            const target = enemy;
+            const fired = await attackCreeperWithBow(bot, target, 1);
             attacked = attacked || fired;
-            // The ranged helper also retreats when no bow or arrows are available.
+            if (!fired) {
+                // Avoid spinning forever on a creeper when ranged gear is
+                // missing or a safe firing position cannot be reached.
+                unableToEngage = true;
+                skippedEnemies.add(target.id);
+            } else if (isEntityStillTracked(bot, target)) {
+                // Keep the same target selected after retreating beyond the
+                // initial self-defence radius; continue firing until it dies
+                // or the ranged helper is interrupted.
+                await new Promise(resolve => setTimeout(resolve, 350));
+                continue;
+            }
         } else {
             await equipHighestAttack(bot);
             const shield = bot.inventory.items().find(item => item.name.includes('shield'));
@@ -549,13 +570,21 @@ export async function defendSelf(bot, range=9) {
             bot.deactivateItem();
             return false;
         }
-        enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
+        enemy = world.getNearestEntityWhere(
+            bot,
+            entity => mc.isHostile(entity) && !skippedEnemies.has(entity.id),
+            range
+        );
     }
 
     bot.pvp.stop();
     bot.deactivateItem();
-    if (attacked)
+    if (attacked && unableToEngage)
+        log(bot, 'Defended self, but could not safely engage every hostile mob.');
+    else if (attacked)
         log(bot, 'Successfully defended self.');
+    else if (unableToEngage)
+        log(bot, 'Could not safely engage every hostile mob.');
     else
         log(bot, 'No enemies nearby to defend self from.');
     return attacked;
