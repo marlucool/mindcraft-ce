@@ -23,10 +23,17 @@ backports the following changes from PrismarineJS master:
   and a raised block is climbed straight on. The walker can't cut a solid corner,
   so it stood still at every turn of a tunnel one block wide.
 
-Local changes clear a rejected goal, enable wooden doors and fence gates, finish
-door interaction state, release jump after placement, and allow escape from lava
-while restoring lava avoidance after leaving it. Vine climbing is restricted to
-the normal vines supported by the installed physics engine.
+Local changes clear rejected goals, enable wooden doors and fence gates,
+finish door interaction state, release jump after placement, and allow escape
+from lava while restoring lava avoidance after leaving it. They also make the
+stop operation settle an active A* search that has not produced an executable
+path yet; without this, a cancellation can leave `goto()` pending.
+
+All Java Edition vine families are registered as climbable when present in the
+loaded game registry. Bamboo is treated according to its narrow collision shape:
+it is passable without being considered a dig target, path waypoints are
+ground-centred, and diagonal sweeps through its stalk are rejected to avoid
+collision stalls.
 
 `GoalLookAtBlock` measures reach from the bot's eye rather than adding eye height
 to the target block. The old expression could reject an otherwise visible log
