@@ -8,6 +8,7 @@ patched package, compare its upstream source before rebasing or removing the pat
 
 This is the latest published npm release checked on November 25, 2026. The patch
 backports the following changes from PrismarineJS master:
+- [Water-containing blocks and waterlogged movement](https://github.com/PrismarineJS/mineflayer-pathfinder/pull/384). Recognize water plants, bubble columns and waterlogged block states as liquid while preserving solid collision shapes and correct waypoint heights.
 - [A* heap ordering and composite-goal heuristic](https://github.com/PrismarineJS/mineflayer-pathfinder/pull/369). Fix the final-child sift-down comparison and use the correct negative-infinity identity for `GoalCompositeAll`.
 - [Upward swimming and shore exits](https://github.com/PrismarineJS/mineflayer-pathfinder/pull/394). Add safe-water ascent and adjacent shore neighbors without scaffolding; reject blocked head space, unsafe liquids, and excluded cells.
 
