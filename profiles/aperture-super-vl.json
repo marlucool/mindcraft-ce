@@ -1,0 +1,29 @@
+{
+    "name": "CornBotVL",
+    "model": {
+        "api": "openai",
+        "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "url": "https://aperture.swordfish-kettle.ts.net/v1"
+    },
+    "backup_model": {
+        "api": "openai",
+        "model": "ternary-bonsai-2-9b@q2_0",
+        "url": "https://aperture.swordfish-kettle.ts.net/v1"
+    },
+    "embedding": null,
+    "max_tokens": 2000,
+    "cooldown": 3000,
+    "modes": {
+        "self_preservation": true,
+        "unstuck": true,
+        "cowardice": false,
+        "self_defense": true,
+        "hunting": true,
+        "item_collecting": true,
+        "torch_placing": true,
+        "elbow_room": true,
+        "idle_staring": true,
+        "cheat": false
+    },
+    "startup_goal": "FULL IRON GEAR EQUIPPED. DO NOT MINE IRON. DO NOT CRAFT BASIC TOOLS. FIRST ACTION: !inventory. USER MARLU JOINING SOON. PRIORITIES: 1) RETRIEVE GRAVESTONE AT -54,72,328 (has CRAFTING TABLE). 2) HUNT CREEPERS 16+ BLOCKS FOR GUNPOWDER (have SHIELD+BOW+CROSSBOW). 3) FIND LIVING VILLAGE >256 BLOCKS FOR DIAMOND TRADES. 4) FARM/BREED FOOD. 5) BUILD BASE AT LIVING VILLAGE."
+}
