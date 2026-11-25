@@ -240,7 +240,6 @@ export class Prompter {
         for (const candidate of models) {
             for (let attempt = 1; attempt <= 3; attempt++) {
                 if (shouldContinue && !shouldContinue()) return '';
-                await this.checkCooldown();
                 try {
                     const generation = await candidate.model.sendRequest(messages, prompt);
                     if (typeof generation !== 'string') {
@@ -256,7 +255,7 @@ export class Prompter {
                 }
             }
 
-            if (candidate.model === this.chat_model && this.backup_model && this.backup_model !== primaryModel) {
+            if (candidate.model === primaryModel && this.backup_model && this.backup_model !== primaryModel) {
                 console.warn(`Primary model failed three times; switching to backup model ${this.profile.backup_model?.model || ''}.`);
             }
         }
@@ -369,6 +368,7 @@ export class Prompter {
 
     async promptGoalSetting(messages, last_goals) {
         // deprecated
+        await this.checkCooldown();
         let system_message = this.profile.goal_setting;
         system_message = await this.replaceStrings(system_message, messages);
 
