@@ -1,6 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { applyLocalModelOptions, extractCompletionText } from './gpt_utils.js';
 
 export class GPT {
     static prefix = 'openai';
@@ -38,6 +39,7 @@ export class GPT {
                     stop: stop_seq,
                     ...(this.params || {})
                 };
+                applyLocalModelOptions(model, pack);
                 if (model.includes('o1') || model.includes('o3') || model.includes('5')) {
                     delete pack.stop;
                 }
@@ -45,7 +47,7 @@ export class GPT {
                 if (completion.choices[0].finish_reason == 'length')
                     console.warn('Model response stopped with finish_reason=length; returning partial response.');
                 console.log('Received.');
-                res = completion.choices[0].message.content;
+                res = extractCompletionText(completion);
             }
             // otherwise, use responses
             else {
