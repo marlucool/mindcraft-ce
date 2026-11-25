@@ -913,6 +913,12 @@ export async function discard(bot, itemName, num=-1) {
      * @example
      * await skills.discard(bot, "oak_log");
      **/
+    if (typeof itemName !== 'string' || itemName.length === 0 ||
+        !(num === -1 || (Number.isSafeInteger(num) && num > 0))) {
+        log(bot, 'Discard amount must be a positive whole number or -1 to discard all.');
+        return false;
+    }
+
     let discarded = 0;
     while (true) {
         let item = bot.inventory.findInventoryItem(itemName);
