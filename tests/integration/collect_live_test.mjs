@@ -14,11 +14,10 @@
 // The harness mutates only the isolated test server by preparing a small stone pad
 // and test blocks. It never writes to the production server (25565).
 // Connects a real bot to the isolated Paper server on 25566 and exercises:
-//   A. normal collection of a real block through collectBlock.collect(block)
-//   B. interruption while navigating to a block
-//   C. interruption while digging a block
+//   A. normal collection of a controlled block on flat, exposed terrain
+//   B. cancellation while A* is yielding partial results and no path exists yet
+//   C. interruption during an active dig
 //   D. cancellation after navigation reaches an item whose pickup is delayed
-//   E. ActionManager.stop() completes
 import { createBot } from 'mineflayer';
 import { pathfinder } from 'mineflayer-pathfinder';
 import { plugin as collectblock } from 'mineflayer-collectblock';
@@ -121,6 +120,35 @@ async function makeBot(username) {
         throw new Error('bot did not settle on solid ground within 20 seconds');
     }
     console.log('  settled on ground at', bot.entity.position);
+
+    let pathUpdateCount = 0;
+    const originalGoto = bot.pathfinder.goto.bind(bot.pathfinder);
+    bot.pathfinder.goto = goal => {
+        const goalType = goal?.constructor?.name || 'unknown goal';
+        const target = goal?.entity?.position || goal?.pos ||
+            (Number.isFinite(goal?.x) ? new Vec3(goal.x, goal.y, goal.z) : null);
+        const started = Date.now();
+        console.log(`  [goto] start ${goalType}${target ? ` target=${target}` : ''}`);
+        const promise = originalGoto(goal);
+        promise.then(
+            () => console.log(`  [goto] resolved ${goalType} in ${Date.now() - started}ms`),
+            error => console.log(`  [goto] rejected ${goalType} in ${Date.now() - started}ms: ${error.name}: ${error.message}`),
+        );
+        return promise;
+    };
+    bot.on('path_update', results => {
+        pathUpdateCount++;
+        if (pathUpdateCount <= 5 || pathUpdateCount % 10 === 0 || results.status !== 'partial') {
+            console.log(`  [path_update #${pathUpdateCount}] status=${results.status} path=${results.path?.length ?? 'n/a'} visited=${results.visitedNodes ?? 'n/a'} generated=${results.generatedNodes ?? 'n/a'} time=${Math.round(results.time ?? 0)}ms`);
+        }
+    });
+    bot.on('goal_reached', goal => console.log(`  [goal_reached] ${goal?.constructor?.name || 'unknown'}`));
+    bot.on('path_stop', () => console.log('  [path_stop]'));
+    bot.on('diggingStarted', block => console.log(`  [diggingStarted] ${block?.name || 'unknown'} @ ${block?.position || ''}`));
+    bot.on('diggingCompleted', block => console.log(`  [diggingCompleted] ${block?.name || 'unknown'} @ ${block?.position || ''}`));
+    bot.on('diggingAborted', block => console.log(`  [diggingAborted] ${block?.name || 'unknown'} @ ${block?.position || ''}`));
+    bot.on('itemDrop', entity => console.log(`  [itemDrop] id=${entity?.id} name=${entity?.name} pos=${entity?.position}`));
+    bot.on('entityGone', entity => console.log(`  [entityGone] id=${entity?.id} name=${entity?.name} pos=${entity?.position}`));
     return bot;
 }
 
@@ -349,6 +377,27 @@ async function main() {
                                 `collectSettled=${collectSettled} cancelSettled=${cancelSettled} collectError=${collectError?.name || 'none'} cancelError=${cancelError?.name || 'none'} after ${elapsed}ms`);
                         }
                         void cancelPromise;
+                    }
+
+                    // If cancellation failed, remove the exact test item so the plugin
+                    // can finish and later scenarios do not overlap an abandoned task.
+                    if (!collectSettled) {
+                        try {
+                            const itemX = Math.floor(item.position.x);
+                            const itemY = Math.floor(item.position.y);
+                            const itemZ = Math.floor(item.position.z);
+                            const cleanupResult = await rcon(
+                                HOST, RCON_PORT, RCON_PASSWORD,
+                                `execute positioned ${itemX} ${itemY} ${itemZ} as @e[type=item,distance=..2,sort=nearest,limit=1] run kill @s`
+                            );
+                            console.log('  pickup-wait cleanup:', cleanupResult.trim());
+                            const cleanupDeadline = Date.now() + 2000;
+                            while (Date.now() < cleanupDeadline && !collectSettled) {
+                                await new Promise(resolve => setTimeout(resolve, 25));
+                            }
+                        } catch (cleanupError) {
+                            console.log('  pickup-wait cleanup failed:', cleanupError.message);
+                        }
                     }
 
                     bot.removeListener('goal_reached', onGoalReached);
