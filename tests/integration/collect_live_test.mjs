@@ -102,11 +102,23 @@ async function makeBot(username) {
     // The bot spawns at a random point and may be falling. Wait until it is
     // standing still on solid ground so the tests are deterministic.
     const groundDeadline = Date.now() + 20000;
+    let stableGroundSamples = 0;
     while (Date.now() < groundDeadline) {
         await new Promise(r => setTimeout(r, 200));
-        if (bot.entity.onGround && bot.entity.velocity && Math.abs(bot.entity.velocity.y) < 0.01) {
-            break;
+        const velocity = bot.entity.velocity;
+        const stationary = velocity &&
+            Math.abs(velocity.x) < 0.01 &&
+            Math.abs(velocity.y) < 0.01 &&
+            Math.abs(velocity.z) < 0.01;
+        if (bot.entity.onGround && stationary) {
+            stableGroundSamples++;
+            if (stableGroundSamples >= 5) break;
+        } else {
+            stableGroundSamples = 0;
         }
+    }
+    if (stableGroundSamples < 5) {
+        throw new Error('bot did not settle on solid ground within 20 seconds');
     }
     console.log('  settled on ground at', bot.entity.position);
     return bot;
@@ -192,7 +204,7 @@ async function main() {
     try {
         const target = await prepareTestBlock(bot, 5, 'stone');
         if (!target) {
-            record('A: normal block collection', 'SKIP', 'no collectable block within 25 blocks');
+            record('A: normal block collection', 'SKIP', 'controlled target block was not created');
         } else {
             const startDistance = bot.entity.position.distanceTo(target.position);
             console.log('  collecting block:', target.name, target.position, 'distance:', startDistance.toFixed(1));
@@ -247,7 +259,7 @@ async function main() {
     try {
         const block = await prepareTestBlock(bot, 5, 'dirt');
         if (!block) {
-            record('D: cancel while waiting for pickup', 'SKIP', 'no collectable block available');
+            record('D: cancel while waiting for pickup', 'SKIP', 'controlled target block was not created');
         } else {
             await bot.tool.equipForBlock(block, { requireHarvest: true, getFromChest: false, maxTools: 1 });
             const dropped = waitForItemDrop(bot, block.position);
@@ -353,7 +365,7 @@ async function main() {
     try {
         const target = await prepareTestBlock(bot, 12, 'stone');
         if (!target) {
-            record('B: cancel during A* search', 'SKIP', 'no collectable block available');
+            record('B: cancel during A* search', 'SKIP', 'controlled target block was not created');
         } else {
             const oldTickTimeout = bot.pathfinder.tickTimeout;
             bot.pathfinder.tickTimeout = 1; // reliably expose the partial-search state
@@ -439,7 +451,7 @@ async function main() {
     try {
         const dirt = await prepareTestBlock(bot, 4, 'stone');
         if (!dirt) {
-            record('C: cancel while digging', 'SKIP', 'no collectable block available');
+            record('C: cancel while digging', 'SKIP', 'controlled target block was not created');
         } else {
             await bot.tool.equipForBlock(dirt, { requireHarvest: true, getFromChest: false, maxTools: 1 });
             // Start digging, then abort it the way requestInterrupt() does
