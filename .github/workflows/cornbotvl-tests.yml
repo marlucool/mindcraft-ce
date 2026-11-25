@@ -40,5 +40,8 @@ jobs:
       - name: Install locked dependencies and apply patches
         run: npm ci
 
+      - name: Validate live integration harness syntax
+        run: node --check tests/integration/collect_live_test.mjs
+
       - name: Run focused regression tests
         run: node --test tests/collectblock_plugin_cancel.test.js tests/player_physics.test.js tests/pathfinder_vine_climbables.test.js tests/pathfinder_bamboo.test.js tests/pathfinder_diagonal_corners.test.js tests/goto_path_search.test.js tests/door_types.test.js tests/move_away.test.js tests/pathfinder_patch_guards.test.js tests/gpt_qwen_compat.test.js
