@@ -126,7 +126,13 @@ export class Agent {
               
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
-              
+
+                // Preserve the production behaviour: start autonomous play when no
+                // saved self-prompt or explicit task was configured.
+                if (!save_data?.self_prompt && !settings.task) {
+                    await this.self_prompter.start("Explore the world, mine some blocks, or build something interesting. Be proactive and do things on your own.");
+                }
+
                 if (!load_mem) {
                     if (settings.task) {
                         this.task.initBotTask();
