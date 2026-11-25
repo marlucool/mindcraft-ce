@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - ai/cornbotvl-ce-migration
+      - integration/cornbotvl-production-customizations
   workflow_dispatch:
 
 permissions:
@@ -40,8 +41,21 @@ jobs:
       - name: Install locked dependencies and apply patches
         run: npm ci
 
-      - name: Validate live integration harness syntax
-        run: node --check tests/integration/collect_live_test.mjs
+      - name: Validate runtime and integration harness syntax
+        run: |
+          node --check main.js
+          node --check src/agent/agent.js
+          node --check src/agent/commands/actions.js
+          node --check src/agent/commands/index.js
+          node --check src/agent/library/skills.js
+          node --check src/agent/library/world.js
+          node --check src/agent/modes.js
+          node --check src/agent/self_prompter.js
+          node --check src/models/gpt.js
+          node --check src/models/prompter.js
+          node --check src/utils/mcdata.js
+          node --check tests/integration/collect_live_test.mjs
+          node --check tests/prompter_fallback.test.js
 
       - name: Run focused regression tests
-        run: node --test tests/collectblock_plugin_cancel.test.js tests/player_physics.test.js tests/pathfinder_vine_climbables.test.js tests/pathfinder_bamboo.test.js tests/pathfinder_diagonal_corners.test.js tests/goto_path_search.test.js tests/door_types.test.js tests/move_away.test.js tests/pathfinder_patch_guards.test.js tests/gpt_qwen_compat.test.js
+        run: node --test tests/collectblock_plugin_cancel.test.js tests/player_physics.test.js tests/pathfinder_vine_climbables.test.js tests/pathfinder_bamboo.test.js tests/pathfinder_diagonal_corners.test.js tests/goto_path_search.test.js tests/door_types.test.js tests/move_away.test.js tests/pathfinder_patch_guards.test.js tests/gpt_qwen_compat.test.js tests/prompter_fallback.test.js
