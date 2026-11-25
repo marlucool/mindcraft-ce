@@ -257,6 +257,13 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mine
    }
  
    heuristic (node) {
+@@ -275,5 +275,5 @@
+   heuristic (node) {
+-    let max = Number.MIN_VALUE
++    let max = -Infinity
+     for (const i in this.goals) {
+       max = Math.max(max, this.goals[i].heuristic(node))
+     }
 diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/mineflayer-pathfinder/lib/goto.js
 --- a/node_modules/mineflayer-pathfinder/lib/goto.js
 +++ b/node_modules/mineflayer-pathfinder/lib/goto.js
@@ -299,3 +306,14 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/minef
 +  promise.catch(() => {})
 +  return promise
  }
+diff --git a/node_modules/mineflayer-pathfinder/lib/heap.js b/node_modules/mineflayer-pathfinder/lib/heap.js
+--- a/node_modules/mineflayer-pathfinder/lib/heap.js
++++ b/node_modules/mineflayer-pathfinder/lib/heap.js
+@@ -57,6 +57,6 @@
+     do {
+       let smallerChildNode = this.heap[smallerChild]
+-      if (smallerChild < size - 1) {
++      if (smallerChild < size) {
+         const rightChildNode = this.heap[smallerChild + 1]
+         if (smallerChildNode.f > rightChildNode.f) {
+           smallerChild++
