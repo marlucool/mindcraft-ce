@@ -478,6 +478,12 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
     const isLiquid = blockType === 'lava' || blockType === 'water';
 
     let collected = 0;
+    // Failed or unreachable targets must not be selected again on the next loop.
+    // Copy the caller's exclusions so this skill never mutates caller-owned data.
+    const excludedBlocks = Array.isArray(exclude) ? [...exclude] : [];
+    const blockTimeoutMs = Number.isFinite(bot.collectBlockTimeoutMs) && bot.collectBlockTimeoutMs > 0
+        ? bot.collectBlockTimeoutMs
+        : 15000;
 
     const movements = new pf.Movements(bot);
     movements.dontMineUnderFallingBlock = false;
@@ -499,11 +505,9 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             if (!blocktypes.includes(block.name)) {
                 return false;
             }
-            if (exclude) {
-                for (let position of exclude) {
-                    if (block.position.x === position.x && block.position.y === position.y && block.position.z === position.z) {
-                        return false;
-                    }
+            for (const position of excludedBlocks) {
+                if (block.position.x === position.x && block.position.y === position.y && block.position.z === position.z) {
+                    return false;
                 }
             }
             if (isLiquid) {
@@ -548,8 +552,57 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
                 success = true;
             }
             else {
-                await bot.collectBlock.collect(block);
-                success = true;
+                const targetPosition = {
+                    x: block.position.x,
+                    y: block.position.y,
+                    z: block.position.z,
+                };
+                const collectPromise = Promise.resolve().then(() => bot.collectBlock.collect(block));
+                let timeoutHandle;
+                const timeoutPromise = new Promise((_, reject) => {
+                    timeoutHandle = setTimeout(() => {
+                        const error = new Error(`Collection of ${blockType} at ${targetPosition.x},${targetPosition.y},${targetPosition.z} exceeded ${blockTimeoutMs}ms.`);
+                        error.name = 'CollectBlockTimeout';
+                        reject(error);
+                    }, blockTimeoutMs);
+                });
+
+                try {
+                    await Promise.race([collectPromise, timeoutPromise]);
+                    success = true;
+                } catch (err) {
+                    if (err?.name !== 'CollectBlockTimeout') throw err;
+
+                    log(bot, `Timeout collecting ${blockType} at ${targetPosition.x},${targetPosition.y},${targetPosition.z}; cancelling the active collection before trying another block.`);
+                    try {
+                        // Stop a dig as well as pathfinding; cancelTask handles the
+                        // plugin's navigation and pickup-wait states.
+                        bot.stopDigging?.();
+                        if (typeof bot.collectBlock?.cancelTask !== 'function') {
+                            throw new Error('collectBlock.cancelTask is unavailable');
+                        }
+                        await bot.collectBlock.cancelTask();
+
+                        // Never start a second collection while the timed-out task is
+                        // still active. The rejection is expected after cancellation.
+                        const settled = await Promise.race([
+                            collectPromise.then(() => true, () => true),
+                            new Promise(resolve => setTimeout(() => resolve(false), 2000)),
+                        ]);
+                        if (!settled) {
+                            log(bot, `Could not confirm cancellation of the timed-out ${blockType} collection; stopping this skill to avoid overlapping tasks.`);
+                            return false;
+                        }
+                    } catch (cancelError) {
+                        log(bot, `Could not cancel timed-out ${blockType} collection: ${cancelError?.message || cancelError}`);
+                        return false;
+                    }
+
+                    excludedBlocks.push(targetPosition);
+                    continue;
+                } finally {
+                    clearTimeout(timeoutHandle);
+                }
             }
             if (success)
                 collected++;
@@ -569,6 +622,13 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             }
             else {
                 log(bot, `Failed to collect ${blockType}: ${err}.`);
+                if (block?.position) {
+                    excludedBlocks.push({
+                        x: block.position.x,
+                        y: block.position.y,
+                        z: block.position.z,
+                    });
+                }
                 continue;
             }
         }
