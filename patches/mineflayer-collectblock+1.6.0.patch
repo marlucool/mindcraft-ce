@@ -19,16 +19,7 @@ diff --git a/node_modules/mineflayer-collectblock/lib/CollectBlock.js b/node_mod
                      yield mineBlock(bot, closest, options);
                      // TODO: options.ignoreNoPath
                      break;
-@@ -190,8 +199,6 @@
-                 throw (0, Util_1.error)('UnresolvedDependency', 'The mineflayer-collectblock plugin relies on the mineflayer-tool plugin to run!');
-             }
-             if (this.movements != null) {
--                this.movements.dontMineUnderFallingBlock = false;
--                this.movements.dontCreateFlow = false;
-                 this.bot.pathfinder.setMovements(this.movements);
-             }
-             if (!optionsFull.append)
-@@ -45,16 +45,25 @@
+@@ -45,16 +54,25 @@
                  case 'Entity': {
                      if (!closest.isValid) break;
                      const tempEvents = new TemporarySubscriber_1.TemporarySubscriber(bot);
@@ -57,7 +48,16 @@ diff --git a/node_modules/mineflayer-collectblock/lib/CollectBlock.js b/node_mod
 +                    }
                      break;
                  }
-@@ -245,13 +254,15 @@
+@@ -190,8 +208,6 @@
+                 throw (0, Util_1.error)('UnresolvedDependency', 'The mineflayer-collectblock plugin relies on the mineflayer-tool plugin to run!');
+             }
+             if (this.movements != null) {
+-                this.movements.dontMineUnderFallingBlock = false;
+-                this.movements.dontCreateFlow = false;
+                 this.bot.pathfinder.setMovements(this.movements);
+             }
+             if (!optionsFull.append)
+@@ -245,13 +261,15 @@
      cancelTask(cb) {
          return __awaiter(this, void 0, void 0, function* () {
              if (this.targets.empty) {
