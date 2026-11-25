@@ -101,7 +101,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      })
      registry.blocksArray.forEach(block => {
 -      if (this.interactableBlocks.has(block.name) && block.name.toLowerCase().includes('gate') && !block.name.toLowerCase().includes('iron')) {
-+      if (this.interactableBlocks.has(block.name) && (block.name.endsWith('_fence_gate') || block.name.endsWith('_door')) && !block.name.toLowerCase().includes('iron')) {
++      if ((block.name.endsWith('_fence_gate') || block.name.endsWith('_door')) && !block.name.toLowerCase().includes('iron')) {
          // console.info(block)
          this.openable.add(block.id)
        }

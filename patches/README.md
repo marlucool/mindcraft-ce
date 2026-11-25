@@ -25,8 +25,16 @@ backports the following changes from PrismarineJS master:
 
 Local changes clear a rejected goal, enable wooden doors and fence gates, finish
 door interaction state, release jump after placement, and allow escape from lava
-while restoring lava avoidance after leaving it. Vine climbing is restricted to
-the normal vines supported by the installed physics engine.
+while restoring lava avoidance after leaving it. Pathfinder detects modern
+non-iron doors and fence gates by their block names rather than a stale list.
+
+## Prismarine-physics 1.11.1
+
+The pathfinder planner and movement simulator must agree about climbable blocks.
+The patch extends the physics engine's ladder/vine check to the Java Edition
+vine families: normal, weeping, twisting, and cave vines, including their plant
+segments. This keeps planned vertical routes executable instead of allowing the
+pathfinder to select climbs that the physics engine cannot perform.
 
 The old fake block-state write before placement, tightened waypoint tolerance,
 and two-block climbing shortcuts have been removed. Paths use confirmed world
