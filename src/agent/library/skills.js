@@ -65,12 +65,23 @@ async function moveAwayFromCreeper(bot, creeper, minimumDistance = 16) {
         return true;
     }
 
+    let timeout;
     try {
         bot.pathfinder.setMovements(new pf.Movements(bot));
         const goal = new pf.goals.GoalInvert(new pf.goals.GoalFollow(creeper, minimumDistance));
-        await bot.pathfinder.goto(goal, true);
+        await Promise.race([
+            bot.pathfinder.goto(goal, true),
+            new Promise((_, reject) => {
+                timeout = setTimeout(() => {
+                    bot.pathfinder.stop();
+                    reject(new Error('Creeper retreat path exceeded 10 seconds.'));
+                }, 10000);
+            })
+        ]);
     } catch (error) {
         console.warn('Could not establish creeper firing distance:', error?.message || error);
+    } finally {
+        clearTimeout(timeout);
     }
 
     return bot.entity.position.distanceTo(creeper.position) >= minimumDistance;
