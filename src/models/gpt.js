@@ -69,15 +69,18 @@ export class GPT {
             }
         }
         catch (err) {
-            if ((err.message == 'Context length exceeded' || err.code == 'context_length_exceeded') && turns.length > 1) {
+            const errorMessage = String(err?.message ?? err);
+            if ((errorMessage === 'Context length exceeded' || err?.code === 'context_length_exceeded') && turns.length > 1) {
                 console.log('Context length exceeded, trying again with shorter context.');
                 return await this.sendRequest(turns.slice(1), systemMessage, stop_seq);
-            } else if (err.message.includes('image_url')) {
-                console.log(err);
-                res = 'Vision is only supported by certain models.';
+            } else if (errorMessage.includes('image_url')) {
+                console.warn('This model does not support image_url content:', errorMessage);
+                return 'Vision is only supported by certain models.';
             } else {
-                console.log(err);
-                res = 'My brain disconnected, try again.';
+                // Let Prompter handle real provider errors so it can activate the
+                // configured backup model instead of disguising a failure as text.
+                console.error('OpenAI-compatible provider request failed:', errorMessage);
+                throw err;
             }
         }
         return res;
