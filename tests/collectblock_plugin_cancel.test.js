@@ -116,7 +116,7 @@ test('cancelTask settles collection while waiting for item pickup', async () => 
     const started = once(bot, 'test:goto-started');
 
     let finishedEvents = 0;
-    bot.on('collectBlock_finished', () => finishedEvents++);
+    bot.once('collectBlock_finished', () => finishedEvents++);
     const collecting = bot.collectBlock.collect(item);
     await withDeadline(started, 'pathfinder goto start');
 
