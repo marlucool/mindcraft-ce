@@ -76,7 +76,8 @@ const modes_list = [
                     });
                 }
             }
-            else if (Date.now() - bot.lastDamageTime < 3000 && (bot.health < 5 || bot.lastDamageTaken >= bot.health)) {
+            else if (!skills.isFleeing(bot) && Date.now() - bot.lastDamageTime < 3000 &&
+                (bot.health < 5 || bot.lastDamageTaken >= bot.health)) {
                 say(agent, 'I\'m dying!');
                 execute(this, agent, async () => {
                     await skills.moveAway(bot, 20);
@@ -93,48 +94,17 @@ const modes_list = [
         interrupts: ['all'],
         on: true,
         active: false,
-        prev_location: null,
-        distance: 2,
-        stuck_time: 0,
-        last_time: Date.now(),
         max_stuck_time: 20,
-        prev_dig_block: null,
         update: async function (agent) {
-            if (agent.isIdle()) { 
-                this.prev_location = null;
-                this.stuck_time = 0;
-                return; // don't get stuck when idle
-            }
+            if (agent.isIdle() || !agent.actions.executing) return;
             const bot = agent.bot;
-            const cur_dig_block = bot.targetDigBlock;
-            if (cur_dig_block && !this.prev_dig_block) {
-                this.prev_dig_block = cur_dig_block;
-            }
-            if (this.prev_location && this.prev_location.distanceTo(bot.entity.position) < this.distance && cur_dig_block == this.prev_dig_block) {
-                this.stuck_time += (Date.now() - this.last_time) / 1000;
-            }
-            else {
-                this.prev_location = bot.entity.position.clone();
-                this.stuck_time = 0;
-                this.prev_dig_block = null;
-            }
-            const max_stuck_time = cur_dig_block?.name === 'obsidian' ? this.max_stuck_time * 2 : this.max_stuck_time;
-            if (this.stuck_time > max_stuck_time) {
-                say(agent, 'I\'m stuck!');
-                this.stuck_time = 0;
-                execute(this, agent, async () => {
-                    const crashTimeout = setTimeout(() => { agent.cleanKill("Got stuck and couldn't get unstuck") }, 10000);
-                    await skills.moveAway(bot, 5);
-                    clearTimeout(crashTimeout);
-                    say(agent, 'I\'m free.');
-                });
-            }
-            this.last_time = Date.now();
-        },
-        unpause: function () {
-            this.prev_location = null;
-            this.stuck_time = 0;
-            this.prev_dig_block = null;
+            agent.actions.progress?.observe(bot);
+            if (!agent.actions.progress || agent.actions.progress.healthy(this.max_stuck_time*1000)) return;
+            say(agent, 'I\'m stuck!');
+            execute(this, agent, async () => {
+                await skills.moveAway(bot, 3);
+                say(agent, 'Trying another approach.');
+            }, 0.25).catch(error => console.warn('Recovery failed:', error.message));
         }
     },
     {
@@ -155,16 +125,18 @@ const modes_list = [
     },
     {
         name: 'self_defense',
-        description: 'Attack nearby enemies. Interrupts all actions.',
+        description: 'Attack nearby enemies and retreat from creepers. Interrupts all actions.',
         interrupts: ['all'],
         on: true,
         active: false,
         update: async function (agent) {
             const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), 8);
             if (enemy && await world.isClearPath(agent.bot, enemy)) {
-                say(agent, `Fighting ${enemy.name}!`);
+                const creeper = enemy.name === 'creeper';
+                say(agent, creeper ? 'Backing away from a creeper!' : `Fighting ${enemy.name}!`);
                 execute(this, agent, async () => {
-                    await skills.defendSelf(agent.bot, 8);
+                    if (creeper) await skills.avoidEnemies(agent.bot, 8);
+                    else await skills.defendSelf(agent.bot, 8);
                 });
             }
         }
