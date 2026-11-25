@@ -5,6 +5,7 @@ export class ActionManager {
         this.currentActionLabel = '';
         this.currentActionFn = null;
         this.timedout = false;
+        this.stopTimeoutMs = 10000;
         this.resume_func = null;
         this.resume_name = '';
         this.last_action_time = 0;
@@ -25,13 +26,13 @@ export class ActionManager {
 
     async stop() {
         if (!this.executing) return;
-        const stuckActionLabel = this.currentActionLabel;
         const timeout = setTimeout(() => {
-            this.agent.cleanKill(`Code execution refused stop after 10 seconds (stuck action: "${stuckActionLabel}"). Killing process.`);
-        }, 10000);
+            console.warn('Action stop timeout reached; requesting another interrupt without killing the process.');
+            this.agent.requestInterrupt();
+            this.timedout = true;
+        }, this.stopTimeoutMs);
         while (this.executing) {
             this.agent.requestInterrupt();
-            console.log('waiting for code to finish executing...');
             await new Promise(resolve => setTimeout(resolve, 300));
         }
         clearTimeout(timeout);
@@ -89,6 +90,8 @@ export class ActionManager {
                 console.log(`action "${actionLabel}" trying to interrupt current action "${this.currentActionLabel}"`);
             }
             await this.stop();
+            // A previous action's stop timeout must not taint the next action's result.
+            this.timedout = false;
 
             // clear bot logs and reset interrupt code
             this.agent.clearBotLogs();
@@ -145,7 +148,7 @@ export class ActionManager {
             if (!interrupted) {
                 this.agent.bot.emit('idle');
             }
-            return { success: false, message, interrupted, timedout: false };
+            return { success: false, message, interrupted, timedout: this.timedout || false };
         }
     }
 
