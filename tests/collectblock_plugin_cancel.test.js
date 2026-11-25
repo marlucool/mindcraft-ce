@@ -91,11 +91,32 @@ test('collectBlock completes normally when the exact item emits entityGone', asy
     assert.equal(bot.listenerCount('entityGone'), 0, 'pickup listener is cleaned up');
 });
 
+
+test('an unrelated entityGone event does not finish the active pickup wait', async () => {
+    const { bot } = createHarness();
+    const item = new Entity();
+    const unrelatedItem = new Entity(12, 64, 12);
+    const started = once(bot, 'test:goto-started');
+    let settled = false;
+
+    const collecting = bot.collectBlock.collect(item).then(() => { settled = true; });
+    await withDeadline(started, 'pathfinder goto start');
+    bot.emit('entityGone', unrelatedItem);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(settled, false, 'only the exact target entity may satisfy the pickup wait');
+
+    bot.emit('entityGone', item);
+    await withDeadline(collecting, 'exact target pickup');
+    assert.equal(settled, true);
+});
+
 test('cancelTask settles collection while waiting for item pickup', async () => {
     const { bot, getStopCalls } = createHarness();
     const item = new Entity();
     const started = once(bot, 'test:goto-started');
 
+    let finishedEvents = 0;
+    bot.on('collectBlock_finished', () => finishedEvents++);
     const collecting = bot.collectBlock.collect(item);
     await withDeadline(started, 'pathfinder goto start');
 
@@ -103,6 +124,7 @@ test('cancelTask settles collection while waiting for item pickup', async () => 
     await withDeadline(Promise.all([collecting, cancelling]), 'collection cancellation');
 
     assert.equal(getStopCalls(), 1, 'pathfinder is stopped once');
+    assert.equal(finishedEvents, 1, 'the collection emits exactly one completion event');
     assert.equal(bot.listenerCount('collectBlock_cancel'), 0, 'cancellation listener is removed');
     assert.equal(bot.listenerCount('entityGone'), 0, 'pickup listener is removed');
     assert.equal(bot.listenerCount('collectBlock_finished'), 0, 'completion listener is removed');
