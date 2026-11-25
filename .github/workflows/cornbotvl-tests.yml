@@ -1,0 +1,41 @@
+name: CornBotVL modern CE regressions
+
+on:
+  push:
+    branches:
+      - ai/cornbotvl-ce-modern
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-regressions:
+    name: Focused navigation, physics and model regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Install locked dependencies and apply patches
+        run: npm ci
+
+      - name: Run focused regression tests
+        run: >-
+          node --test
+          tests/player_physics.test.js
+          tests/pathfinder_vine_climbables.test.js
+          tests/pathfinder_bamboo.test.js
+          tests/pathfinder_diagonal_corners.test.js
+          tests/goto_path_search.test.js
+          tests/door_types.test.js
+          tests/move_away.test.js
+          tests/pathfinder_patch_guards.test.js
+          tests/gpt_qwen_compat.test.js
