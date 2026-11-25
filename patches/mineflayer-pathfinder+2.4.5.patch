@@ -59,10 +59,18 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
                  if (bot.pathfinder.LOSWhenPlacingBlocks && placingBlock.returnPos) returningPos = placingBlock.returnPos.clone()
                })
                .catch(_ignoreError => {
-@@ -609,6 +622,9 @@
+@@ -576,5 +594,5 @@
+     let dx = nextPoint.x - p.x
+     const dy = nextPoint.y - p.y
+     let dz = nextPoint.z - p.z
+-    if (Math.abs(dx) <= 0.35 && Math.abs(dz) <= 0.35 && Math.abs(dy) < 1) {
++    if (Math.abs(dx) <= 0.35 && Math.abs(dz) <= 0.35 && Math.abs(dy) < (bot.entity.isInWater && dy > 0 ? 0.25 : 1)) {
+       // arrived at next point
+@@ -609,6 +622,10 @@
      bot.setControlState('jump', false)
  
      if (bot.entity.isInWater) {
++      if (Math.abs(dx) <= 0.35 && Math.abs(dz) <= 0.35) bot.setControlState('forward', false)
 +      bot.setControlState('jump', true)
 +      bot.setControlState('sprint', false)
 +    } else if (bot.entity.isInLava) {
@@ -184,7 +192,45 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      cost2 += this.safeOrBreak(blockB2, toBreak2)
      cost2 += this.safeOrBreak(blockC2, toBreak2)
      if (blockD2.height - block0.height > 1.2) cost2 += this.safeOrBreak(blockD2, toBreak2)
-@@ -658,6 +664,12 @@
+@@ -554,6 +559,36 @@
+     neighbors.push(new Move(node.x, node.y + 1, node.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
+   }
+ 
++  getMoveWaterExit (node, neighbors) {
++    const water = this.bot.registry.blocksByName.water.id
++    const current = this.getBlock(node, 0, 0, 0)
++    if (current.type !== water || !current.safe) return
++    const above = this.getBlock(node, 0, 1, 0)
++    const overhead = this.getBlock(node, 0, 2, 0)
++    if (!above.safe || !overhead.safe) return
++
++    // Swimming upward needs no scaffolding, unlike the ordinary tower move.
++    if (above.type === water) {
++      const toBreak = []
++      const cost = 1 + this.liquidCost + this.safeOrBreak(above, toBreak) + this.safeOrBreak(overhead, toBreak)
++      if (cost < 100) {
++        neighbors.push(new Move(node.x, node.y + 1, node.z, node.remainingBlocks, cost, toBreak))
++      }
++    }
++
++    for (const dir of cardinalDirections) {
++      const shore = this.getBlock(node, dir.x, 0, dir.z)
++      if (!shore.physical || this.blocksToAvoid.has(shore.type)) continue
++      const feet = this.getBlock(node, dir.x, 1, dir.z)
++      const head = this.getBlock(node, dir.x, 2, dir.z)
++      if (feet.liquid || head.liquid) continue
++      const toBreak = []
++      const cost = 2 + this.liquidCost + this.safeOrBreak(feet, toBreak) + this.safeOrBreak(head, toBreak)
++      if (cost >= 100) continue
++      neighbors.push(new Move(node.x + dir.x, node.y + 1, node.z + dir.z, node.remainingBlocks, cost, toBreak))
++    }
++  }
++
+   // Jump up, down or forward over a 1 block gap
+@@ -656,8 +692,15 @@
+     this.getMoveDown(node, neighbors)
+     this.getMoveUp(node, neighbors)
++    this.getMoveWaterExit(node, neighbors)
  
      return neighbors
    }
@@ -214,6 +260,10 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mine
 diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/mineflayer-pathfinder/lib/goto.js
 --- a/node_modules/mineflayer-pathfinder/lib/goto.js
 +++ b/node_modules/mineflayer-pathfinder/lib/goto.js
+@@ -16,2 +16,2 @@
+ function goto (bot, goal) {
+-  return new Promise((resolve, reject) => {
++  const promise = new Promise((resolve, reject) => {
 @@ -20,12 +20,14 @@
      }
  
@@ -242,3 +292,10 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/minef
  
        // Run callback on next event stack to let pathfinder properly cleanup,
        // otherwise chaining waypoints does not work properly.
+@@ -63,3 +63,6 @@
+     bot.pathfinder.setGoal(goal)
+   })
++  // Keep cancellation rejections handled if an upper layer has stopped awaiting.
++  promise.catch(() => {})
++  return promise
+ }

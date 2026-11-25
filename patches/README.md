@@ -6,8 +6,9 @@ patched package, compare its upstream source before rebasing or removing the pat
 
 ## Pathfinder 2.4.5
 
-This is the latest published npm release checked on September 30, 2026. The patch
+This is the latest published npm release checked on November 25, 2026. The patch
 backports the following changes from PrismarineJS master:
+- [Upward swimming and shore exits](https://github.com/PrismarineJS/mineflayer-pathfinder/pull/394). Add safe-water ascent and adjacent shore neighbors without scaffolding; reject blocked head space, unsafe liquids, and excluded cells.
 
 - [Unreachable and partial path results, and idle stop handling](https://github.com/PrismarineJS/mineflayer-pathfinder/pull/375)
   (`84c3bd29a7fb`). An empty failed search must reject; a partial search must keep
@@ -39,6 +40,8 @@ pathfinder to select climbs that the physics engine cannot perform.
 The old fake block-state write before placement, tightened waypoint tolerance,
 and two-block climbing shortcuts have been removed. Paths use confirmed world
 state and upstream movement constraints.
+
+`goto()` also marks its returned promise as rejection-handled for callers that stop awaiting an active route. The original promise is still returned, so awaited callers continue to receive `PathStopped`, `NoPath`, and other errors.
 
 ## Collectblock 1.6.0
 
