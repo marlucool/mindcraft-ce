@@ -24,6 +24,19 @@ jobs:
           node-version: 22.13.0
           cache: npm
 
+      - name: Verify collectblock patch against the clean published package
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          npm install --prefix "$temp_dir" --ignore-scripts --no-save mineflayer-collectblock@1.6.0
+          echo "=== Published CollectBlock.js context ==="
+          nl -ba "$temp_dir/node_modules/mineflayer-collectblock/lib/CollectBlock.js" | sed -n '20,85p;185,285p'
+          echo "=== Patch dry-run ==="
+          cd "$temp_dir"
+          git apply --check --verbose "$GITHUB_WORKSPACE/patches/mineflayer-collectblock+1.6.0.patch"
+
       - name: Install locked dependencies and apply patches
         run: npm ci
 
