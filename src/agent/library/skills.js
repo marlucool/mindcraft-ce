@@ -72,7 +72,7 @@ async function moveAwayFromCreeper(bot, creeper, minimumDistance = 16) {
     return bot.entity.position.distanceTo(creeper.position) >= minimumDistance;
 }
 
-async function attackCreeperWithBow(bot, creeper, maxShots = 1) {
+async function attackCreeperWithBow(bot, creeper, maxShots = 1, requireKill = false) {
     if (!hasBowAndArrows(bot)) {
         log(bot, 'Creeper is nearby, but I do not have both a bow and arrows. Keeping distance.');
         await moveAwayFromCreeper(bot, creeper);
@@ -90,20 +90,24 @@ async function attackCreeperWithBow(bot, creeper, maxShots = 1) {
 
         if (!await moveAwayFromCreeper(bot, creeper)) {
             log(bot, 'Could not reach the minimum creeper firing distance; refusing melee engagement.');
-            return attacked;
+            return false;
         }
 
         if (!await shootBowAt(bot, creeper)) {
-            return attacked;
+            return false;
         }
         attacked = true;
 
         if (!world.getNearbyEntities(bot, 32).includes(creeper)) {
-            break;
+            return true;
         }
         await new Promise(resolve => setTimeout(resolve, 350));
     }
 
+    if (requireKill && attacked) {
+        log(bot, 'Creeper is still present after the ranged attack limit; not reporting a confirmed kill.');
+        return false;
+    }
     return attacked;
 }
 
@@ -453,7 +457,7 @@ export async function attackEntity(bot, entity, kill=true) {
 
     let pos = entity.position;
     if (entity.name === 'creeper') {
-        return await attackCreeperWithBow(bot, entity, kill ? 12 : 1);
+        return await attackCreeperWithBow(bot, entity, kill ? 12 : 1, kill);
     }
 
     await equipHighestAttack(bot);
@@ -507,10 +511,7 @@ export async function defendSelf(bot, range=9) {
         if (enemy.name === 'creeper') {
             const fired = await attackCreeperWithBow(bot, enemy, 1);
             attacked = attacked || fired;
-            if (!fired && !hasBowAndArrows(bot)) {
-                // Stay out of melee range even when the bot has no ranged weapon.
-                await moveAwayFromCreeper(bot, enemy);
-            }
+            // The ranged helper also retreats when no bow or arrows are available.
         } else {
             await equipHighestAttack(bot);
             const shield = bot.inventory.items().find(item => item.name.includes('shield'));
