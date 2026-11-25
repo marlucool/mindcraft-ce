@@ -3,7 +3,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -61,6 +61,7 @@
    }
-
+ 
    bot.pathfinder.getPathTo = (movements, goal, timeout) => {
 +    movements.updateLavaAvoidance()
      const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, { timeout })
@@ -11,7 +11,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
      astarContext = context
 @@ -160,6 +161,12 @@
    }
-
+ 
    bot.pathfinder.stop = () => {
 +    // Nothing is running, so there is nothing to stop; the flag would otherwise survive until the
 +    // next goal and stop that one instead.
@@ -21,7 +21,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
 +    // Reset now so an in-progress A* search is cancelled and goto() receives path_stop.
 +    if (path.length === 0) resetPath('stopped')
    }
-
+ 
 @@ -168,9 +175,17 @@
    function postProcessPath (path) {
      for (let i = 0; i < path.length; i++) {
@@ -35,7 +35,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
 -      if (b && (b.type === waterType || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
 +      // An openable block is a doorway: its node is the floor centre. getPositionOnTopOf
 +      // would put it on top of the swung-open leaf (offset ~0.9 and a block up), which
-+      // the walk simulation can never reach — the bot stands in the open doorway until 'stuck'
++      // the walk simulation can never reach â the bot stands in the open doorway until 'stuck'
 +      const doorway = stateMovements && stateMovements.openable && b && stateMovements.openable.has(b.type)
 +      const bamboo = b && b.name === 'bamboo'
 +      if (b && (b.type === waterType || doorway || bamboo || ((b.type === ladderId || b.type === vineId) && i + 1 < path.length && path[i + 1].y < curPoint.y))) {
@@ -61,7 +61,7 @@ diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflay
                .catch(_ignoreError => {
 @@ -609,6 +622,9 @@
      bot.setControlState('jump', false)
-
+ 
      if (bot.entity.isInWater) {
 +      bot.setControlState('jump', true)
 +      bot.setControlState('sprint', false)
@@ -78,11 +78,11 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      if (registry.blocksByName.web) this.blocksToAvoid.add(registry.blocksByName.web.id)
 -    this.blocksToAvoid.add(registry.blocksByName.lava.id)
 +    this.updateLavaAvoidance()
-
+ 
      this.liquids = new Set()
      this.liquids.add(registry.blocksByName.water.id)
 @@ -62,7 +62,13 @@
-
+ 
      this.climbables = new Set()
      this.climbables.add(registry.blocksByName.ladder.id)
 -    // this.climbables.add(registry.blocksByName.vine.id)
@@ -94,7 +94,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 +    if (registry.blocksByName.cave_vines) this.climbables.add(registry.blocksByName.cave_vines.id)
 +    if (registry.blocksByName.cave_vines_plant) this.climbables.add(registry.blocksByName.cave_vines_plant.id)
      this.emptyBlocks = new Set()
-
+ 
      this.replaceables = new Set()
 @@ -92,13 +92,13 @@
        }
@@ -106,10 +106,10 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
          this.openable.add(block.id)
        }
      })
-
+ 
 -    this.canOpenDoors = false // Causes issues. Probably due to none paper servers.
 +    this.canOpenDoors = true
-
+ 
      this.exclusionAreasStep = []
      this.exclusionAreasBreak = []
 @@ -232,9 +232,10 @@
@@ -124,7 +124,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      b.height = pos.y + dy
      b.canFall = this.gravityBlocks.has(b.type)
      b.openable = this.openable.has(b.type)
-
+ 
 @@ -284,6 +284,7 @@
      cost += this.exclusionStep(block) // Is excluded so can't move or break
      cost += this.getNumEntitiesAt(block.position, 0, 0, 0) * this.entityCost
@@ -132,7 +132,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 +    if (this.canOpenDoors && block.openable) return cost
      if (!this.safeToBreak(block)) return 100 // Can't break, so can't move
      toBreak.push(block.position)
-
+ 
 @@ -379,7 +380,7 @@
          cost += this.exclusionBreak(blockD)
          toBreak.push(blockD.position)
@@ -144,7 +144,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      }
 @@ -388,7 +389,7 @@
      if (cost > 100) return
-
+ 
      // Open fence gates
 -    if (this.canOpenDoors && blockC.openable && blockC.shapes && blockC.shapes.length !== 0) {
 +    if (this.canOpenDoors && blockC.openable && !blockC.getProperties().open) {
@@ -152,7 +152,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      } else {
        cost += this.safeOrBreak(blockC, toBreak)
 @@ -406,6 +407,16 @@
-
+ 
      const blockC = this.getBlock(node, dir.x, 0, dir.z) // Landing block or standing on block when jumping up by 1
      const y = blockC.physical ? 1 : 0
 +    // A diagonal jump can clip the corner of the raised block. Use the
@@ -165,9 +165,9 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 +      [dir.x, 0, dir.z], [dir.x, 1, dir.z]
 +    ].some(([dx, dy, dz]) => this.getBlock(node, dx, dy, dz).name === 'bamboo')
 +    if (bambooCrossing) return
-
+ 
      const block0 = this.getBlock(node, 0, -1, 0)
-
+ 
 @@ -414,6 +418,7 @@
      const blockB1 = this.getBlock(node, 0, y + 1, dir.z)
      const blockC1 = this.getBlock(node, 0, y, dir.z)
@@ -185,7 +185,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
      cost2 += this.safeOrBreak(blockC2, toBreak2)
      if (blockD2.height - block0.height > 1.2) cost2 += this.safeOrBreak(blockD2, toBreak2)
 @@ -658,6 +664,12 @@
-
+ 
      return neighbors
    }
 +
@@ -195,7 +195,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 +    else this.blocksToAvoid.add(lavaId)
 +  }
  }
-
+ 
  module.exports = Movements
 diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mineflayer-pathfinder/lib/goals.js
 --- a/node_modules/mineflayer-pathfinder/lib/goals.js
@@ -203,20 +203,20 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goals.js b/node_modules/mine
 @@ -212,8 +212,8 @@
      this.goal = new GoalLookAtBlock(new Vec3(x, y, z), bot, options)
    }
-
+ 
 -  isEnd () {
 -    return this.goal.isEnd()
 +  isEnd (node) {
 +    return this.goal.isEnd(node)
    }
-
+ 
    heuristic (node) {
 diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/mineflayer-pathfinder/lib/goto.js
 --- a/node_modules/mineflayer-pathfinder/lib/goto.js
 +++ b/node_modules/mineflayer-pathfinder/lib/goto.js
 @@ -20,12 +20,14 @@
      }
-
+ 
      function noPathListener (results) {
 -      if (results.path.length === 0) {
 -        cleanup()
@@ -231,7 +231,7 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/minef
 +        cleanup()
        }
      }
-
+ 
 @@ -44,6 +46,9 @@
        bot.removeListener('path_update', noPathListener)
        bot.removeListener('goal_updated', goalChangedListener)
@@ -239,6 +239,6 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/goto.js b/node_modules/minef
 +
 +      // A failed search must not leave an active goal behind.
 +      if (err && bot.pathfinder.goal === goal) bot.pathfinder.setGoal(null)
-
+ 
        // Run callback on next event stack to let pathfinder properly cleanup,
        // otherwise chaining waypoints does not work properly.
