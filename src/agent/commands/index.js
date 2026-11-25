@@ -215,6 +215,7 @@ export async function executeCommand(agent, message) {
         return parsed; //The command was incorrectly formatted or an invalid input was given.
     else {
         console.log('parsed command:', parsed);
+        agent.last_executed_command = parsed.commandName;
         const command = getCommand(parsed.commandName);
         let numArgs = 0;
         if (parsed.args) {
