@@ -1,6 +1,7 @@
 import minecraftData from 'minecraft-data';
 import settings from '../agent/settings.js';
 import { guardBotActions } from '../agent/action_context.js';
+import { configurePlayerCollisionWidth } from './player_physics.js';
 import { createBot } from 'mineflayer';
 import prismarine_items from 'prismarine-item';
 import { pathfinder } from 'mineflayer-pathfinder';
@@ -125,6 +126,8 @@ export function initBot(username) {
     });
 
     enableFabricRegistrySync(bot);
+
+    configurePlayerCollisionWidth(bot);
 
     // Throttle position packets to avoid kicks on Paper/Spigot servers
     // Paper enforces stricter packet rate limits than vanilla, causing ECONNRESET
