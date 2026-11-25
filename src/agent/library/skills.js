@@ -1500,51 +1500,94 @@ export async function followPlayer(bot, username, distance=4) {
 export async function moveAway(bot, distance) {
     assertActionOwner(bot);
     /**
-     * Move away from current position in any direction.
+     * Move away from current position in any direction and verify the result.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @param {number} distance, the distance to move away.
-     * @returns {Promise<boolean>} true if the bot moved away, false otherwise.
+     * @param {number} distance, the minimum distance to move away.
+     * @returns {Promise<boolean>} true only when the requested distance is confirmed.
      * @example
      * await skills.moveAway(bot, 8);
      **/
-    const pos = bot.entity.position;
-    let goal = new pf.goals.GoalNear(pos.x, pos.y, pos.z, distance);
-    let inverted_goal = new pf.goals.GoalInvert(goal);
-    bot.pathfinder.setMovements(new pf.Movements(bot));
+    if (!Number.isFinite(distance) || distance <= 0 || !bot.entity?.position) {
+        log(bot, 'Recovery distance must be a positive number.');
+        return false;
+    }
+
+    const startPos = bot.entity.position.clone();
+    const nearGoal = new pf.goals.GoalNear(startPos.x, startPos.y, startPos.z, distance);
+    const invertedGoal = new pf.goals.GoalInvert(nearGoal);
+    const movements = new pf.Movements(bot);
+    bot.pathfinder.setMovements(movements);
 
     if (bot.modes.isOn('cheat')) {
-        const move = new pf.Movements(bot);
-        const path = await bot.pathfinder.getPathTo(move, inverted_goal, 10000);
-        let last_move = path.path[path.path.length-1];
-        if (last_move) {
-            let x = Math.floor(last_move.x);
-            let y = Math.floor(last_move.y);
-            let z = Math.floor(last_move.z);
-            bot.chat('/tp @s ' + x + ' ' + y + ' ' + z);
-            return true;
+        try {
+            const result = await searchPath(bot, movements, invertedGoal, 10000);
+            const lastMove = result?.status === 'success' ? result.path?.at(-1) : null;
+            if (!lastMove) {
+                log(bot, 'Could not find a complete recovery destination.');
+                return false;
+            }
+
+            bot.chat('/tp @s ' + Math.floor(lastMove.x) + ' ' + Math.floor(lastMove.y) + ' ' + Math.floor(lastMove.z));
+            // Teleports are asynchronous; confirm the server actually moved the bot.
+            for (let attempt = 0; attempt < 15; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                if (bot.interrupt_code) return false;
+                if (bot.entity.position.distanceTo(startPos) > distance) return true;
+            }
+            log(bot, 'Teleport was requested, but the bot did not reach the recovery distance.');
+            return false;
+        } catch (error) {
+            log(bot, `Recovery pathfinding failed: ${error.message}.`);
+            return false;
         }
     }
 
-    await goToGoal(bot, inverted_goal);
-    let new_pos = bot.entity.position;
-    log(bot, `Moved away from ${pos.floored()} to ${new_pos.floored()}.`);
-    return true;
+    try {
+        const reachedGoal = await goToGoal(bot, invertedGoal);
+        const movedDistance = bot.entity.position.distanceTo(startPos);
+        const recovered = reachedGoal && !bot.interrupt_code && movedDistance > distance;
+        if (recovered) {
+            log(bot, `Moved away from ${startPos.floored()} to ${bot.entity.position.floored()} (${movedDistance.toFixed(1)} blocks).`);
+        } else {
+            log(bot, `Recovery did not reach the requested distance (moved ${movedDistance.toFixed(1)} of ${distance} blocks).`);
+        }
+        return recovered;
+    } catch (error) {
+        log(bot, `Recovery navigation failed: ${error.message}.`);
+        return false;
+    }
 }
 
 export async function moveAwayFromEntity(bot, entity, distance=16) {
     assertActionOwner(bot);
     /**
-     * Move away from the given entity.
+     * Move away from the given entity and verify the final separation.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {Entity} entity, the entity to move away from.
-     * @param {number} distance, the distance to move away.
-     * @returns {Promise<boolean>} true if the bot moved away, false otherwise.
+     * @param {number} distance, the minimum separation to reach.
+     * @returns {Promise<boolean>} true only when the requested distance is confirmed.
      **/
-    let goal = new pf.goals.GoalFollow(entity, distance);
-    let inverted_goal = new pf.goals.GoalInvert(goal);
+    if (!entity?.position || !bot.entity?.position || !Number.isFinite(distance) || distance <= 0 || bot.interrupt_code) {
+        return false;
+    }
+
+    const initialDistance = bot.entity.position.distanceTo(entity.position);
+    if (initialDistance > distance) return true;
+
+    const goal = new pf.goals.GoalInvert(new pf.goals.GoalFollow(entity, distance));
     bot.pathfinder.setMovements(new pf.Movements(bot));
-    await bot.pathfinder.goto(inverted_goal);
-    return true;
+    try {
+        await bot.pathfinder.goto(goal);
+        const finalDistance = bot.entity.position.distanceTo(entity.position);
+        const recovered = !bot.interrupt_code && finalDistance > distance;
+        if (!recovered) {
+            log(bot, `Could not move far enough away from ${entity.username || entity.name || 'the target'}.`);
+        }
+        return recovered;
+    } catch (error) {
+        log(bot, `Could not move away from target: ${error.message}.`);
+        return false;
+    }
 }
 
 const activeFlees = new WeakMap();
@@ -1559,11 +1602,16 @@ export async function avoidEnemies(bot, distance=16) {
     /**
      * Move a given distance away from all nearby enemy mobs.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @param {number} distance, the distance to move away.
-     * @returns {Promise<boolean>} true if the bot moved away, false otherwise.
+     * @param {number} distance, the distance to keep from nearby hostile mobs.
+     * @returns {Promise<boolean>} true if avoidance completed, false if interrupted.
      * @example
      * await skills.avoidEnemies(bot, 8);
      **/
+    if (!Number.isFinite(distance) || distance <= 0) {
+        log(bot, 'Enemy avoidance distance must be a positive finite number.');
+        return false;
+    }
+
     const flee = {};
     const clearFlee = () => {
         if (activeFlees.get(bot) === flee) activeFlees.delete(bot);
@@ -1590,6 +1638,11 @@ export async function avoidEnemies(bot, distance=16) {
             bot.pathfinder.stop();
         }
     }
+
+    if (bot.interrupt_code) {
+        log(bot, 'Enemy avoidance was interrupted before threats were clear.');
+        return false;
+    }
     log(bot, `Moved ${distance} away from enemies.`);
     return true;
 }
@@ -1597,13 +1650,17 @@ export async function avoidEnemies(bot, distance=16) {
 export async function stay(bot, seconds=30) {
     assertActionOwner(bot);
     /**
-     * Stay in the current position until interrupted. Disables all modes.
+     * Stay in the current position until interrupted.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {number} seconds, the number of seconds to stay. Defaults to 30. -1 for indefinite.
-     * @returns {Promise<boolean>} true if the bot stayed, false otherwise.
+     * @returns {Promise<boolean>} true if the bot stayed, false if interrupted or invalid.
      * @example
      * await skills.stay(bot);
      **/
+    if (!Number.isFinite(seconds) || (seconds < 0 && seconds !== -1)) {
+        log(bot, 'Stay duration must be a non-negative number or -1.');
+        return false;
+    }
     bot.modes.pause('self_preservation');
     bot.modes.pause('unstuck');
     bot.modes.pause('cowardice');
@@ -1611,12 +1668,17 @@ export async function stay(bot, seconds=30) {
     bot.modes.pause('hunting');
     bot.modes.pause('torch_placing');
     bot.modes.pause('item_collecting');
-    let start = Date.now();
-    while (!bot.interrupt_code && (seconds === -1 || Date.now() - start < seconds*1000)) {
+    const start = Date.now();
+    while (!bot.interrupt_code && (seconds === -1 || Date.now() - start < seconds * 1000)) {
         await new Promise(resolve => setTimeout(resolve, 500));
     }
-    log(bot, `Stayed for ${(Date.now() - start)/1000} seconds.`);
-    return true;
+    const stayed = !bot.interrupt_code;
+    if (stayed) {
+        log(bot, `Stayed for ${(Date.now() - start) / 1000} seconds.`);
+    } else {
+        log(bot, `Stay was interrupted after ${(Date.now() - start) / 1000} seconds.`);
+    }
+    return stayed;
 }
 
 export async function useDoor(bot, door_pos=null) {
