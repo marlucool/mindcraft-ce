@@ -108,7 +108,12 @@ export async function craftRecipe(bot, itemName, num=1) {
     }
     
     if (craftingTable && bot.entity.position.distanceTo(craftingTable.position) > 4) {
-        await goToNearestBlock(bot, 'crafting_table', 4, craftingTableRange);
+        const reachedTable = await goToNearestBlock(bot, 'crafting_table', 4, craftingTableRange);
+        if (!reachedTable) {
+            if (placedTable) await collectBlock(bot, 'crafting_table', 1);
+            log(bot, 'Could not reach the crafting table.');
+            return false;
+        }
     }
 
     const recipe = recipes[0];
@@ -195,7 +200,12 @@ export async function smeltItem(bot, itemName, num=1) {
         return false;
     }
     if (bot.entity.position.distanceTo(furnaceBlock.position) > 4) {
-        await goToNearestBlock(bot, 'furnace', 4, furnaceRange);
+        const reachedFurnace = await goToNearestBlock(bot, 'furnace', 4, furnaceRange);
+        if (!reachedFurnace) {
+            if (placedFurnace) await collectBlock(bot, 'furnace', 1);
+            log(bot, 'Could not reach the furnace.');
+            return false;
+        }
     }
     bot.modes.pause('unstuck');
     await bot.lookAt(furnaceBlock.position);
@@ -307,7 +317,11 @@ export async function clearNearestFurnace(bot) {
         return false;
     }
     if (bot.entity.position.distanceTo(furnaceBlock.position) > 4) {
-        await goToNearestBlock(bot, 'furnace', 4, 32);
+        const reachedFurnace = await goToNearestBlock(bot, 'furnace', 4, 32);
+        if (!reachedFurnace) {
+            log(bot, 'Could not reach the furnace.');
+            return false;
+        }
     }
 
     console.log('clearing furnace...');
@@ -1355,8 +1369,7 @@ export async function goToNearestBlock(bot, blockType,  min_distance=2, range=64
         return false;
     }
     log(bot, `Found ${blockType} at ${block.position}. Navigating...`);
-    await goToPosition(bot, block.position.x, block.position.y, block.position.z, min_distance);
-    return true;
+    return await goToPosition(bot, block.position.x, block.position.y, block.position.z, min_distance);
 }
 
 export async function goToNearestEntity(bot, entityType, min_distance=2, range=64) {
@@ -1376,8 +1389,7 @@ export async function goToNearestEntity(bot, entityType, min_distance=2, range=6
     }
     let distance = bot.entity.position.distanceTo(entity.position);
     log(bot, `Found ${entityType} ${distance} blocks away.`);
-    await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z, min_distance);
-    return true;
+    return await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z, min_distance);
 }
 
 export async function goToPlayer(bot, username, distance=3) {
