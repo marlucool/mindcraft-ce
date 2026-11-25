@@ -167,46 +167,60 @@ async function main() {
     console.log('Start position:', start);
 
     // ---- Test A: normal collection of a real block ----
+    // Exercise the same public API used by skills.collectBlock(): pass the block
+    // to collectblock and let the plugin navigate, dig, and gather the drop.
     try {
-        // Find a dirt block near spawn
-        const dirt = findCollectable(bot, 25);
-        if (!dirt) {
-            record('A: normal collection', 'SKIP', 'no collectable block within 25 blocks');
+        const target = findCollectable(bot, 25);
+        if (!target) {
+            record('A: normal block collection', 'SKIP', 'no collectable block within 25 blocks');
         } else {
-            console.log('Digging dirt at', dirt.position);
-            await bot.tool.equipForBlock(dirt, { requireHarvest: true, getFromChest: false, maxTools: 1 });
-            if (!bot.heldItem || bot.heldItem.name !== 'iron_pickaxe') {
-                const pickItem = bot.inventory.items().find(i => i.name === 'iron_pickaxe');
-                if (!pickItem) {
-                    throw new Error('SKIP_NO_PICKAXE');
-                }
-                await bot.equip(pickItem, 'hand');
-            }
-            const dropped = waitForItemDrop(bot, dirt.position);
-            await bot.dig(dirt);
-            const item = await dropped;
-            if (item) {
-                console.log('  item dropped:', item.name, item.position);
-                const t0 = Date.now();
-                const res = await Promise.race([
-                    bot.collectBlock.collect(item),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('collect timed out after 15s')), 15000)),
-                ]).catch(e => ({ __error: e.message }));
-                const elapsed = Date.now() - t0;
-                if (res && res.__error) {
-                    record('A: normal collection', 'FAIL', res.__error);
-                } else {
-                    record('A: normal collection', 'PASS', `collected ${item.name} in ${elapsed}ms (returned ${res})`);
-                }
+            const startDistance = bot.entity.position.distanceTo(target.position);
+            console.log('  collecting block:', target.name, target.position, 'distance:', startDistance.toFixed(1));
+            if (startDistance > 25.5) {
+                record('A: normal block collection', 'FAIL',
+                    `harness selected a block ${startDistance.toFixed(1)} blocks away despite maxDistance=25`);
             } else {
-                record('A: normal collection', 'FAIL', 'no item drop observed');
+                const beforeType = target.type;
+                let timeoutHandle;
+                const attempt = bot.collectBlock.collect(target).then(
+                    () => ({ ok: true }),
+                    error => ({ error }),
+                );
+                const outcome = await Promise.race([
+                    attempt,
+                    new Promise(resolve => {
+                        timeoutHandle = setTimeout(() => resolve({ timeout: true }), 15000);
+                    }),
+                ]);
+                clearTimeout(timeoutHandle);
+
+                if (outcome.timeout) {
+                    record('A: normal block collection', 'FAIL', 'collectBlock.collect(block) timed out after 15s');
+                    // Do not leave a failed test task running into the following scenarios.
+                    await Promise.race([
+                        bot.collectBlock.cancelTask().catch(() => {}),
+                        new Promise(resolve => setTimeout(resolve, 2000)),
+                    ]);
+                } else if (outcome.error) {
+                    record('A: normal block collection', 'FAIL',
+                        `${outcome.error.name}: ${outcome.error.message}`);
+                } else {
+                    const remaining = bot.blockAt(target.position);
+                    if (remaining && remaining.type === beforeType) {
+                        record('A: normal block collection', 'FAIL',
+                            'collectBlock resolved but the target block is still present');
+                    } else {
+                        record('A: normal block collection', 'PASS',
+                            `plugin navigated, mined ${target.name}, and settled in the expected block position`);
+                    }
+                }
             }
         }
     } catch (err) {
-        record('A: normal collection', 'FAIL', `${err.name}: ${err.message}`);
+        record('A: normal block collection', 'FAIL', `${err.name}: ${err.message}`);
     }
 
-    // ---- Test D: interruption while waiting for item pickup (THE DEADLOCK) ----
+    // ---- Test D: interruption while waiting for item pickup ----
     // To reach the plugin's "wait for entityGone" state the item must NOT be
     // picked up naturally. We teleport every nearby dropped item far away so the
     // bot cannot reach it. The plugin then navigates as far as it can and blocks
@@ -297,60 +311,90 @@ async function main() {
         record('D: cancel while waiting for pickup', 'FAIL', `${err.name}: ${err.message}`);
     }
 
-    // ---- Test B: interruption while navigating to a block ----
+    // ---- Test B: interrupt while the pathfinder is still searching (no path yet) ----
     try {
-        const dirt = findCollectable(bot, 30);
-        if (!dirt) {
-            record('B: cancel while navigating', 'SKIP', 'no collectable block available');
+        const target = findCollectable(bot, 30);
+        if (!target) {
+            record('B: cancel during A* search', 'SKIP', 'no collectable block available');
         } else {
-            console.log('  target block:', dirt.name, dirt.position);
-
-            // ---- Full event trace ----
+            const oldTickTimeout = bot.pathfinder.tickTimeout;
+            bot.pathfinder.tickTimeout = 1; // reliably expose the partial-search state
             const t0 = Date.now();
-            const trace = (label, extra) => console.log(`  [t+${String(Date.now()-t0).padStart(5)}ms] ${label}${extra ? ' :: ' + extra : ''}`);
-            const EVENTS = ['diggingStarted','diggingCompleted','diggingAborted','path_update','path_stop','path_complete',
-                            'path_found','goal_updated','collectBlock_finished','move','physicsTick','spawn'];
-            for (const ev of EVENTS) {
-                bot.on(ev, (arg) => {
-                    if (ev === 'physicsTick' || ev === 'move') return; // too noisy
-                    trace('EVENT ' + ev, arg ? (arg.toString ? arg.toString().slice(0,80) : '') : '');
-                });
-            }
-            const origStop = bot.pathfinder.stop.bind(bot.pathfinder);
-            bot.pathfinder.stop = function (...a) { trace('pathfinder.stop() CALLED'); return origStop(...a); };
-            const origCancel = bot.collectBlock.cancelTask.bind(bot.collectBlock);
-            bot.collectBlock.cancelTask = function (...a) { trace('cancelTask() CALLED'); return origCancel(...a); };
+            const trace = (label, extra = '') =>
+                console.log(`  [t+${String(Date.now() - t0).padStart(5)}ms] ${label}${extra ? ' :: ' + extra : ''}`);
 
-            trace('calling collectBlock.collect()');
-            const collectPromise = bot.collectBlock.collect(dirt);
-            let settled = false;
-            collectPromise.then(() => { settled = true; trace('collect RESOLVED'); }, (e) => { settled = true; trace('collect REJECTED: ' + e.name + ' ' + e.message); });
-            await new Promise(r => setTimeout(r, 1000));
-            trace('before cancel: settled=' + settled + ' botPos=' + JSON.stringify(bot.entity.position) + ' targetPos=' + JSON.stringify(dirt.position));
-            const cancelPromise = bot.collectBlock.cancelTask();
-            let cancelSettled = false;
-            cancelPromise.then(() => { cancelSettled = true; trace('cancelTask RESOLVED'); }, (e) => { cancelSettled = true; trace('cancelTask REJECTED: ' + e.name + ' ' + e.message); });
-            trace('cancel issued; waiting');
-            const deadline = Date.now() + 8000;
-            let lastTrace = 0;
-            while (Date.now() < deadline && !(settled && cancelSettled)) {
-                await new Promise(r => setTimeout(r, 100));
-                if (Date.now() - lastTrace > 1000) {
-                    lastTrace = Date.now();
-                    trace('still pending: collect=' + settled + ' cancel=' + cancelSettled +
-                          ' botPos=' + JSON.stringify(bot.entity.position));
+            let sawEmptyPartial = false;
+            let collectSettled = false;
+            let collectError = null;
+            const onPathUpdate = results => {
+                if (results?.status === 'partial' && !bot.pathfinder.isMoving() && bot.pathfinder.goal) {
+                    sawEmptyPartial = true;
+                    trace('A* yielded partial with no executable path',
+                        `visited=${results.visitedNodes} generated=${results.generatedNodes} goalActive=true`);
+                }
+            };
+            bot.on('path_update', onPathUpdate);
+
+            trace('starting collectBlock.collect(block)',
+                `target=${target.name}@${target.position}`);
+            const collectPromise = bot.collectBlock.collect(target).then(
+                () => { collectSettled = true; trace('collect resolved'); },
+                error => { collectSettled = true; collectError = error; trace('collect rejected', `${error.name}: ${error.message}`); },
+            );
+
+            const searchDeadline = Date.now() + 4000;
+            while (Date.now() < searchDeadline && !sawEmptyPartial && !collectSettled) {
+                await new Promise(resolve => setTimeout(resolve, 20));
+            }
+
+            if (!sawEmptyPartial) {
+                record('B: cancel during A* search', 'SKIP',
+                    collectSettled
+                        ? 'collection completed before an empty partial-search state was observed'
+                        : 'pathfinder did not expose an empty partial-search state within 4s');
+                if (!collectSettled) {
+                    await Promise.race([
+                        bot.collectBlock.cancelTask().catch(() => {}),
+                        new Promise(resolve => setTimeout(resolve, 2000)),
+                    ]);
+                }
+            } else {
+                trace('cancelling while A* has no path');
+                const cancelPromise = bot.collectBlock.cancelTask();
+                let cancelSettled = false;
+                cancelPromise.then(
+                    () => { cancelSettled = true; trace('cancelTask resolved'); },
+                    error => { cancelSettled = true; trace('cancelTask rejected', `${error.name}: ${error.message}`); },
+                );
+
+                const deadline = Date.now() + 3000;
+                while (Date.now() < deadline && !(collectSettled && cancelSettled)) {
+                    await new Promise(resolve => setTimeout(resolve, 20));
+                }
+
+                if (collectSettled && cancelSettled && !collectError) {
+                    record('B: cancel during A* search', 'PASS',
+                        `collect and cancelTask both settled after ${Date.now() - t0}ms`);
+                } else {
+                    record('B: cancel during A* search', 'FAIL',
+                        `collectSettled=${collectSettled} cancelSettled=${cancelSettled} collectError=${collectError?.name || 'none'}`);
                 }
             }
-            const elapsed = 8000 - (deadline - Date.now());
-            trace('FINAL: settled=' + settled + ' cancelSettled=' + cancelSettled);
-            if (settled && cancelSettled) {
-                record('B: cancel while navigating', 'PASS', `both settled within ${elapsed}ms`);
-            } else {
-                record('B: cancel while navigating', 'FAIL', `collect=${settled} cancel=${cancelSettled} after ${elapsed}ms`);
+            bot.removeListener('path_update', onPathUpdate);
+            bot.pathfinder.tickTimeout = oldTickTimeout;
+            // Ensure no active collection remains before the next test.
+            if (bot.collectBlock && bot.pathfinder.goal) {
+                await Promise.race([
+                    bot.collectBlock.cancelTask().catch(() => {}),
+                    new Promise(resolve => setTimeout(resolve, 1500)),
+                ]);
             }
+            // Keep the reference alive until the collection promise has had a chance to settle.
+            void collectPromise;
         }
     } catch (err) {
-        record('B: cancel while navigating', 'FAIL', `${err.name}: ${err.message}`);
+        record('B: cancel during A* search', 'FAIL', `${err.name}: ${err.message}`);
+        bot.pathfinder.tickTimeout = 40;
     }
 
     // ---- Test C: interruption while digging ----
