@@ -25,7 +25,7 @@ export function resolveTaskDefinition(taskMap, taskId) {
         throw new TypeError('A non-empty task_id is required.');
     }
 
-    const selectedTask = taskMap[taskId];
+    const selectedTask = Object.hasOwn(taskMap, taskId) ? taskMap[taskId] : undefined;
     if (!selectedTask || typeof selectedTask !== 'object' || Array.isArray(selectedTask)) {
         throw new Error(`Task "${taskId}" was not found in the task file.`);
     }
