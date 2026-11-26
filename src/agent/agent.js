@@ -17,6 +17,7 @@ import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
+import { escapeSpawnWater } from '../utils/spawn_safety.js';
 
 /** The chat command that applies a profile's skin, or null when the profile doesn't set one. */
 export function skinCommand(profile) {
@@ -28,6 +29,7 @@ export class Agent {
         this.last_sender = null;
         this.count_id = count_id;
         this._disconnectHandled = false;
+        this._agentInitialized = false;
 
         // Initialize components
         this.actions = new ActionManager(this);
@@ -70,19 +72,16 @@ export class Agent {
         console.log(this.name, 'logging into minecraft...');
         this.bot = initBot(this.name);
         
-        // Connection Handler
+        // One disconnect path handles failures both before and after the first spawn.
         const onDisconnect = (event, reason) => {
             if (this._disconnectHandled) return;
             this._disconnectHandled = true;
 
-            // Log and Analyze
-            // handleDisconnection handles logging to console and server
-            const { type } = handleDisconnection(this.name, reason);
-     
-            process.exit(1);
+            const { type, msg } = handleDisconnection(this.name, reason);
+            this.cleanKill(event + ' (' + type + '): ' + msg, 1);
         };
-        
-        // Bind events
+
+        // Bind before login so early connection failures are also supervised.
         this.bot.once('kicked', (reason) => onDisconnect('Kicked', reason));
         this.bot.once('end', (reason) => onDisconnect('Disconnected', reason));
         this.bot.on('error', (err) => {
@@ -111,6 +110,17 @@ export class Agent {
             log(this.name, msg);
             process.exit(1);
         }, spawnTimeoutDuration * 1000);
+
+        // Mineflayer emits spawn again after death/respawn. Recover unsafe spawn
+        // positions without reinitialising the agent's event loop.
+        this.bot.on('spawn', () => {
+            if (!this._agentInitialized) return;
+            void this.recoverUnsafeSpawn('respawn').catch((error) => {
+                console.error('[spawn-safety] ' + this.name + ' could not recover after respawning:', error);
+                this.cleanKill('Unable to recover from unsafe respawn: ' + (error?.message || error), 1);
+            });
+        });
+
         this.bot.once('spawn', async () => {
             try {
                 clearTimeout(spawnTimeout);
@@ -120,12 +130,16 @@ export class Agent {
 
                 // wait for a bit so stats are not undefined
                 await new Promise((resolve) => setTimeout(resolve, 1000));
+
+                // Escape submerged world spawns before starting goals or normal work.
+                await this.recoverUnsafeSpawn('initial spawn');
                 
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
               
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
+                this._agentInitialized = true;
               
                 if (!load_mem) {
                     if (settings.task) {
@@ -152,7 +166,8 @@ export class Agent {
 
             } catch (error) {
                 console.error('Error in spawn event:', error);
-                process.exit(0);
+                // A failed spawn initialisation must be restarted by AgentProcess.
+                process.exit(1);
             }
         });
     }
@@ -230,6 +245,24 @@ export class Agent {
         else {
             this.openChat("Hello world! I am "+this.name);
         }
+    }
+
+    async recoverUnsafeSpawn(context = 'spawn') {
+        const result = await escapeSpawnWater(this.bot, {
+            timeoutMs: 8000,
+            pollIntervalMs: 100
+        });
+
+        if (result.recovered) {
+            const pos = this.bot.entity.position;
+            console.warn(
+                '[spawn-safety] ' + this.name + ' surfaced during ' + context
+                + ' after ' + result.elapsedMs + 'ms at '
+                + '(' + pos.x.toFixed(1) + ', ' + pos.y.toFixed(1) + ', ' + pos.z.toFixed(1) + ').'
+            );
+        }
+
+        return result;
     }
 
     checkAllPlayersPresent() {
@@ -469,22 +502,11 @@ export class Agent {
         this.bot.on('error' , (err) => {
             console.error('Error event!', err);
         });
-        // Use connection handler for runtime disconnects
-        this.bot.on('end', (reason) => {
-            if (!this._disconnectHandled) {
-                const { msg } = handleDisconnection(this.name, reason);
-                this.cleanKill(msg);
-            }
-        });
+        // Connection-level 'end' and 'kicked' listeners are registered in start(),
+        // before login, and remain active for the lifetime of this bot.
         this.bot.on('death', () => {
             this.actions.cancelResume();
             this.actions.stop();
-        });
-        this.bot.on('kicked', (reason) => {
-            if (!this._disconnectHandled) {
-                const { msg } = handleDisconnection(this.name, reason);
-                this.cleanKill(msg);
-            }
         });
         this.bot.on('messagestr', async (message, _, jsonMsg) => {
             if (jsonMsg.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
@@ -544,9 +566,13 @@ export class Agent {
 
     cleanKill(msg='Killing agent process...', code=1) {
         console.error(`[cleanKill] ${this.name}: ${msg} (exit code ${code})`);
-        this.history.add('system', msg);
-        this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
-        this.history.save();
+        this.history?.add?.('system', msg);
+        try {
+            this.bot?.chat?.(code > 1 ? 'Restarting.' : 'Exiting.');
+        } catch (error) {
+            console.warn('[cleanKill] ' + this.name + ': could not send shutdown chat message:', error?.message || error);
+        }
+        this.history?.save?.();
         process.exit(code);
     }
     async checkTaskDone() {

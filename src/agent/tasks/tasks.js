@@ -3,6 +3,7 @@ import { executeCommand } from '../commands/index.js';
 import { getPosition } from '../library/world.js';
 import { ConstructionTaskValidator, Blueprint } from './construction_tasks.js';
 import { CookingTaskInitiator } from './cooking_tasks.js';
+import { isValidTaskDefinition } from '../../utils/task_validation.js';
 
 const PROGRESS_FILE = './hells_kitchen_progress.json';
 
@@ -242,6 +243,12 @@ export class Task {
         this.validator = null;
         this.reset_function = null;
         this.blocked_actions = [];
+
+        if (task_data != null && !isValidTaskDefinition(task_data)) {
+            console.warn('Ignoring invalid task definition: task_id and type are required.');
+            task_data = null;
+        }
+
         this.task_data = task_data;
         if (task_data) {
             console.log('Starting task', task_data.task_id);
@@ -363,6 +370,8 @@ export class Task {
     }
 
     isDone() {
+        if (!this.data) return false;
+
         let res = null;
         if (this.validator)
             res = this.validator.validate();
@@ -374,10 +383,11 @@ export class Task {
             // this.agent.bot.chat(`/clear @a`);
             return {"message": 'Task successful', "score": res.score};
         }
-        let other_names = this.available_agents.filter(n => n !== this.name);
         const elapsedTime = (Date.now() - this.taskStartTime) / 1000;
 
-        if (elapsedTime >= 30 && this.available_agents.length !== this.data.agent_count) {
+        if (Number.isInteger(this.data.agent_count)
+            && elapsedTime >= 30
+            && this.available_agents.length !== this.data.agent_count) {
             console.log('No other agents found. Task unsuccessful.');
             return {"message": 'No other agents found', "score": 0};
         }

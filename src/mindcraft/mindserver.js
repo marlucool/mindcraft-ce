@@ -10,6 +10,7 @@ import {
     resolveControlToken,
     resolveMindServerBindHost,
 } from './security.js';
+import { isValidTaskDefinition } from '../utils/task_validation.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const CONTROL_ROOM = 'mindcraft:control';
@@ -351,7 +352,7 @@ export function createMindServer(host_public = false, port = 8080) {
         socket.on('finish-task', (agentName) => {
             if (!requireAgent(agentName)) return;
             const agent = agent_connections[agentName];
-            if (curAgentName !== agentName || agent.socket !== socket || !agent.settings.task) {
+            if (curAgentName !== agentName || agent.socket !== socket || !isValidTaskDefinition(agent.settings?.task)) {
                 socket.emit('agent-auth-error', { error: 'Only a connected task agent can finish a task run.' });
                 return;
             }
