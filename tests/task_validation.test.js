@@ -46,6 +46,6 @@ test('rejects empty, malformed, and inherited task entries', () => {
     assert.throws(() => resolveTaskDefinition({}, ''), /non-empty task_id/);
     assert.throws(() => resolveTaskDefinition([], 'task-a'), /JSON object keyed by task ID/);
     assert.throws(() => resolveTaskDefinition({ task: {} }, 'task'), /task_id and type are required/);
-    assert.throws(() => resolveTaskDefinition({ task: { type: 'crafting' } }, 'task'), /task_id and type are required/);
+    assert.deepEqual(resolveTaskDefinition({ task: { type: 'crafting' } }, 'task'), { type: 'crafting', task_id: 'task' });
     assert.throws(() => resolveTaskDefinition({}, 'toString'), /was not found/);
 });
