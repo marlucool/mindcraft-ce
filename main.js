@@ -5,6 +5,7 @@ import { hideBin } from 'yargs/helpers';
 import { readFileSync } from 'fs';
 import { parseBooleanEnv, parseIntegerEnv, parseJsonEnv, parseJsonObjectEnv } from './src/utils/env.js';
 import { applyStartupGoalOverride } from './src/utils/startup_goal.js';
+import { resolveTaskDefinition } from './src/utils/task_validation.js';
 
 function parseArguments() {
     return yargs(hideBin(process.argv))
@@ -31,8 +32,7 @@ if (args.profiles) {
 if (args.task_path) {
     let tasks = JSON.parse(readFileSync(args.task_path, 'utf8'));
     if (args.task_id) {
-        settings.task = tasks[args.task_id];
-        settings.task.task_id = args.task_id;
+        settings.task = resolveTaskDefinition(tasks, args.task_id);
     }
     else {
         throw new Error('task_id is required when task_path is provided');
